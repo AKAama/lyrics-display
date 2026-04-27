@@ -22,7 +22,9 @@ It aims to stay lightweight, fast to launch, and easy to install.
 - Timed LRC parsing and current-line matching
 - In-memory lyric cache per track
 - Fallback to `Track - Artist` when no lyric is found
-- Adjustable lyric sync offset through `LYRICS_OFFSET_MS`
+- Persistent config file support
+- CLI and menu controls for lyric offset tuning
+- Emoji prefix toggle and custom symbol support
 
 ## Quick Start
 
@@ -76,14 +78,16 @@ go build -o lyrics-display .
 lyrics-display
 lyrics-display --help
 lyrics-display --version
+lyrics-display status
+lyrics-display config show
+lyrics-display config path
+lyrics-display config set emoji off
+lyrics-display config set emoji-char "🎵"
+lyrics-display config set offset-ms 450
+lyrics-display offset +100
+lyrics-display offset -100
 brew services start akaama/lyrics-display/lyrics-display
 brew services stop akaama/lyrics-display/lyrics-display
-```
-
-Optional environment variable:
-
-```bash
-LYRICS_OFFSET_MS=450 lyrics-display
 ```
 
 Default offset is `350ms`.
@@ -97,6 +101,48 @@ If lyrics do not appear, check:
 `System Settings -> Privacy & Security -> Automation`
 
 and allow your terminal or the installed binary to control `Music`.
+
+## Config File
+
+The default config path is:
+
+```bash
+~/Library/Application Support/lyrics-display/config.json
+```
+
+You can print the exact path with:
+
+```bash
+lyrics-display config path
+```
+
+Current supported keys:
+
+- `show_emoji`
+- `emoji`
+- `offset_ms`
+
+Create the default config file:
+
+```bash
+lyrics-display config init
+```
+
+Show the current config:
+
+```bash
+lyrics-display config show
+```
+
+Examples:
+
+```bash
+lyrics-display config set emoji off
+lyrics-display config set emoji-char "🎵"
+lyrics-display config set offset-ms 250
+lyrics-display offset +100
+lyrics-display offset -100
+```
 
 ## How It Works
 
@@ -154,3 +200,4 @@ make version
 - If only song title and artist appear, the current track may not have matched synced lyrics.
 - If the lyric feels early or late, adjust `LYRICS_OFFSET_MS` and restart the app.
 - If you launch `lyrics-display` directly from a terminal, closing that terminal will also stop the app; use `brew services start akaama/lyrics-display/lyrics-display` for background use.
+- This build does not support custom menu bar font or text color. On macOS, those are controlled by the system menu bar and are not exposed through the current `systray` approach.

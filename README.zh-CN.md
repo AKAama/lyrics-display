@@ -22,7 +22,9 @@
 - 自动匹配歌曲并解析 `LRC` 时间轴
 - 按歌曲缓存歌词，减少重复请求
 - 没有同步歌词时自动回退为 `歌曲名 - 歌手`
-- 支持通过 `LYRICS_OFFSET_MS` 手动微调歌词同步偏移
+- 支持持久化配置文件
+- 支持命令行和菜单内调整歌词同步偏移
+- 支持 Emoji 前缀开关和自定义符号
 
 ## 快速开始
 
@@ -69,14 +71,16 @@ lyrics-display
 lyrics-display
 lyrics-display --help
 lyrics-display --version
+lyrics-display status
+lyrics-display config show
+lyrics-display config path
+lyrics-display config set emoji off
+lyrics-display config set emoji-char "🎵"
+lyrics-display config set offset-ms 450
+lyrics-display offset +100
+lyrics-display offset -100
 brew services start akaama/lyrics-display/lyrics-display
 brew services stop akaama/lyrics-display/lyrics-display
-```
-
-如需手动调整歌词时间偏移：
-
-```bash
-LYRICS_OFFSET_MS=450 lyrics-display
 ```
 
 默认偏移为 `350ms`。
@@ -90,6 +94,48 @@ LYRICS_OFFSET_MS=450 lyrics-display
 `系统设置 -> 隐私与安全性 -> 自动化`
 
 并允许终端或安装后的可执行程序控制 `Music`。
+
+## 配置文件
+
+配置文件默认位于：
+
+```bash
+~/Library/Application Support/lyrics-display/config.json
+```
+
+你也可以通过下面的命令查看真实路径：
+
+```bash
+lyrics-display config path
+```
+
+当前支持的配置项：
+
+- `show_emoji`
+- `emoji`
+- `offset_ms`
+
+可以先生成一份默认配置：
+
+```bash
+lyrics-display config init
+```
+
+查看当前配置：
+
+```bash
+lyrics-display config show
+```
+
+快速修改示例：
+
+```bash
+lyrics-display config set emoji off
+lyrics-display config set emoji-char "🎵"
+lyrics-display config set offset-ms 250
+lyrics-display offset +100
+lyrics-display offset -100
+```
 
 ## 工作原理
 
@@ -162,3 +208,4 @@ brew install lyrics-display
 - 如果只显示歌曲名和歌手，通常表示当前歌曲没有匹配到同步歌词。
 - 如果歌词快了或慢了，可以调整 `LYRICS_OFFSET_MS` 后重新启动程序。
 - 如果你直接在终端里运行 `lyrics-display`，关闭终端后程序也会退出；长期使用请改用 `brew services start akaama/lyrics-display/lyrics-display`。
+- 当前这个版本不能自定义菜单栏文字颜色或字体。这不是缺少配置项，而是因为 macOS 菜单栏文字样式由系统控制，`systray` 路线本身不开放这类定制。

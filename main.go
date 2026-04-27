@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,12 +26,13 @@ import (
 )
 
 const (
-	menuBarPrefix   = "♪ "
 	menuBarMaxRunes = 28
 	pollInterval    = 500 * time.Millisecond
 	defaultOffset   = 350 * time.Millisecond
 	requestTimeout  = 6 * time.Second
 	fieldSeparator  = "\x1f"
+	appName         = "lyrics-display"
+	defaultEmoji    = "♪"
 )
 
 var (
@@ -121,29 +123,148 @@ type lyricResponse struct {
 	} `json:"lrc"`
 }
 
+type config struct {
+	ShowEmoji bool   `json:"show_emoji"`
+	Emoji     string `json:"emoji"`
+	OffsetMS  int    `json:"offset_ms"`
+}
+
+func defaultConfig() config {
+	return config{
+		ShowEmoji: true,
+		Emoji:     defaultEmoji,
+		OffsetMS:  int(defaultOffset / time.Millisecond),
+	}
+}
+
+type configStore struct {
+	path string
+	mu   sync.Mutex
+}
+
+func newConfigStore() (*configStore, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	return &configStore{
+		path: filepath.Join(configDir, appName, "config.json"),
+	}, nil
+}
+
+func (s *configStore) pathString() string {
+	return s.path
+}
+
+func (s *configStore) ensureDir() error {
+	return os.MkdirAll(filepath.Dir(s.path), 0o755)
+}
+
+func (s *configStore) load() (config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg := defaultConfig()
+
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, err
+	}
+
+	cfg.normalize()
+	return cfg, nil
+}
+
+func (s *configStore) save(cfg config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg.normalize()
+
+	if err := s.ensureDir(); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	data = append(data, '\n')
+	return os.WriteFile(s.path, data, 0o644)
+}
+
+func (c *config) normalize() {
+	if strings.TrimSpace(c.Emoji) == "" {
+		c.Emoji = defaultEmoji
+	}
+	if c.OffsetMS < -5000 {
+		c.OffsetMS = -5000
+	}
+	if c.OffsetMS > 5000 {
+		c.OffsetMS = 5000
+	}
+}
+
+func (c config) titlePrefix() string {
+	if !c.ShowEmoji {
+		return ""
+	}
+	return strings.TrimSpace(c.Emoji) + " "
+}
+
+func (c config) offsetDuration() time.Duration {
+	return time.Duration(c.OffsetMS) * time.Millisecond
+}
+
 type app struct {
 	client       *neteaseClient
 	cache        *lyricCache
 	logger       *log.Logger
-	offset       time.Duration
+	configStore  *configStore
+	config       config
 	cancel       context.CancelFunc
 	quitOnce     sync.Once
 	statusItem   *systray.MenuItem
 	trackItem    *systray.MenuItem
 	sourceItem   *systray.MenuItem
+	offsetItem   *systray.MenuItem
+	emojiItem    *systray.MenuItem
+	fasterItem   *systray.MenuItem
+	slowerItem   *systray.MenuItem
+	resetItem    *systray.MenuItem
+	pathItem     *systray.MenuItem
 	lastTitle    string
 	lastTrackKey string
 }
 
 func main() {
-	if handled := handleCLI(os.Args[1:], os.Stdout); handled {
+	store, err := newConfigStore()
+	if err != nil {
+		log.Fatalf("resolve config path: %v", err)
+	}
+
+	cfg, err := store.load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+
+	if handled := handleCLI(os.Args[1:], os.Stdout, store, cfg); handled {
 		return
 	}
 
-	systray.Run(onReady, onExit)
+	startMenuBarApp(store, cfg)
 }
 
-func handleCLI(args []string, stdout io.Writer) bool {
+func handleCLI(args []string, stdout io.Writer, store *configStore, cfg config) bool {
 	fs := flag.NewFlagSet("lyrics-display", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 
@@ -167,9 +288,20 @@ func handleCLI(args []string, stdout io.Writer) bool {
 		return true
 	}
 
-	if fs.NArg() > 0 && fs.Arg(0) == "version" {
+	if fs.NArg() == 0 {
+		return false
+	}
+
+	switch fs.Arg(0) {
+	case "version":
 		fmt.Fprintln(stdout, versionString())
 		return true
+	case "status":
+		return handleStatus(stdout, store, cfg)
+	case "config":
+		return handleConfigCommand(stdout, store, cfg, fs.Args()[1:])
+	case "offset":
+		return handleOffsetCommand(stdout, store, cfg, fs.Args()[1:])
 	}
 
 	return false
@@ -181,12 +313,19 @@ func printUsage(w io.Writer) {
 Apple Music menu bar lyrics for macOS.
 
 Usage:
-  lyrics-display           Start the menu bar app
-  lyrics-display --help    Show this help text
-  lyrics-display --version Print version information
-
-Environment:
-  LYRICS_OFFSET_MS         Lyric sync offset in milliseconds (default: 350)
+  lyrics-display                                        Start the menu bar app
+  lyrics-display --help                                 Show this help text
+  lyrics-display --version                              Print version information
+  lyrics-display status                                 Show current config and runtime hints
+  lyrics-display config show                            Print current config JSON
+  lyrics-display config path                            Print config file path
+  lyrics-display config init                            Create the default config file
+  lyrics-display config set emoji on|off                Enable or disable the menu bar emoji
+  lyrics-display config set emoji-char "♪"             Set the emoji or prefix symbol
+  lyrics-display config set offset-ms 450               Set lyric sync offset in milliseconds
+  lyrics-display offset +100                            Delay lyric matching by 100ms
+  lyrics-display offset -100                            Advance lyric matching by 100ms
+  lyrics-display offset set 350                         Set lyric offset directly
 `)
 }
 
@@ -201,25 +340,45 @@ func versionString() string {
 	return strings.Join(parts, " ")
 }
 
+func startMenuBarApp(store *configStore, cfg config) {
+	currentConfigStore = store
+	currentConfig = cfg
+	systray.Run(onReady, onExit)
+}
+
+var (
+	currentConfigStore *configStore
+	currentConfig      config
+)
+
 func onReady() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	app := &app{
-		client: newNetEaseClient(),
-		cache:  newLyricCache(),
-		logger: log.New(os.Stdout, "[lyrics-display] ", log.LstdFlags),
-		offset: readOffset(),
-		cancel: cancel,
+		client:      newNetEaseClient(),
+		cache:       newLyricCache(),
+		logger:      log.New(os.Stdout, "[lyrics-display] ", log.LstdFlags),
+		configStore: currentConfigStore,
+		config:      currentConfig,
+		cancel:      cancel,
 	}
 
 	systray.SetTooltip("Apple Music Lyrics Display")
-	systray.SetTitle(menuBarPrefix + "启动中…")
+	systray.SetTitle(app.config.titlePrefix() + "启动中…")
 
 	app.statusItem = systray.AddMenuItem("状态：启动中", "Current status")
 	app.trackItem = systray.AddMenuItem("歌曲：-", "Current track")
 	app.sourceItem = systray.AddMenuItem("歌词源：网易云音乐", "Lyric provider")
+	app.offsetItem = systray.AddMenuItem("", "Current lyric offset")
+	app.emojiItem = systray.AddMenuItem("", "Toggle emoji prefix")
+	app.fasterItem = systray.AddMenuItem("歌词提前 100ms", "Advance lyric sync")
+	app.slowerItem = systray.AddMenuItem("歌词延后 100ms", "Delay lyric sync")
+	app.resetItem = systray.AddMenuItem("重置偏移为 350ms", "Reset lyric offset")
+	app.pathItem = systray.AddMenuItem("", "Config file path")
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("退出", "Quit")
+
+	app.refreshConfigMenu()
 
 	go func() {
 		select {
@@ -230,6 +389,7 @@ func onReady() {
 		}
 	}()
 
+	go app.handleMenuActions(ctx)
 	go app.run(ctx)
 }
 
@@ -306,7 +466,7 @@ func (a *app) loadLyrics(ctx context.Context, nowPlaying nowPlaying) lyricDocume
 }
 
 func (a *app) renderLyric(np nowPlaying, doc lyricDocument) {
-	line := currentLyric(doc.Lines, np.Position+a.offset)
+	line := currentLyric(doc.Lines, np.Position+a.config.offsetDuration())
 	if line == "" {
 		line = fallbackLine(np.Track, np.Artist)
 	}
@@ -323,7 +483,7 @@ func (a *app) renderLyric(np nowPlaying, doc lyricDocument) {
 }
 
 func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
-	line := currentLyric(doc.Lines, np.Position+a.offset)
+	line := currentLyric(doc.Lines, np.Position+a.config.offsetDuration())
 	if line == "" {
 		line = fallbackLine(np.Track, np.Artist)
 	}
@@ -346,7 +506,7 @@ func (a *app) renderError(message string) {
 }
 
 func (a *app) setTitle(line string) {
-	title := menuBarPrefix + trimForMenuBar(line)
+	title := a.config.titlePrefix() + trimForMenuBar(line)
 	if title == a.lastTitle {
 		return
 	}
@@ -421,6 +581,52 @@ end tell
 		Album:    strings.TrimSpace(parts[3]),
 		Position: time.Duration(seconds * float64(time.Second)),
 	}, nil
+}
+
+func (a *app) handleMenuActions(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.emojiItem.ClickedCh:
+			a.config.ShowEmoji = !a.config.ShowEmoji
+			a.persistConfig()
+			a.refreshConfigMenu()
+			a.lastTitle = ""
+		case <-a.fasterItem.ClickedCh:
+			a.config.OffsetMS -= 100
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.slowerItem.ClickedCh:
+			a.config.OffsetMS += 100
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.resetItem.ClickedCh:
+			a.config.OffsetMS = int(defaultOffset / time.Millisecond)
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.pathItem.ClickedCh:
+			a.logger.Printf("config path: %s", a.configStore.pathString())
+		}
+	}
+}
+
+func (a *app) persistConfig() {
+	a.config.normalize()
+	if err := a.configStore.save(a.config); err != nil {
+		a.logger.Printf("save config: %v", err)
+	}
+}
+
+func (a *app) refreshConfigMenu() {
+	a.config.normalize()
+	a.offsetItem.SetTitle(fmt.Sprintf("歌词偏移：%dms", a.config.OffsetMS))
+	if a.config.ShowEmoji {
+		a.emojiItem.SetTitle("Emoji：开启")
+	} else {
+		a.emojiItem.SetTitle("Emoji：关闭")
+	}
+	a.pathItem.SetTitle("配置文件：" + a.configStore.pathString())
 }
 
 func musicAppRunning(ctx context.Context) bool {
@@ -699,20 +905,6 @@ func similarityScore(expected, actual string) int {
 	return min(score, 70)
 }
 
-func readOffset() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("LYRICS_OFFSET_MS"))
-	if raw == "" {
-		return defaultOffset
-	}
-
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return defaultOffset
-	}
-
-	return time.Duration(value) * time.Millisecond
-}
-
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -725,4 +917,128 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func handleStatus(stdout io.Writer, store *configStore, cfg config) bool {
+	cfg.normalize()
+	fmt.Fprintf(stdout, "version: %s\n", versionString())
+	fmt.Fprintf(stdout, "config: %s\n", store.pathString())
+	fmt.Fprintf(stdout, "emoji: %t (%s)\n", cfg.ShowEmoji, cfg.Emoji)
+	fmt.Fprintf(stdout, "offset_ms: %d\n", cfg.OffsetMS)
+	fmt.Fprintf(stdout, "music_running: %t\n", musicAppRunning(context.Background()))
+	fmt.Fprintln(stdout, "note: menu bar text color and font are controlled by macOS and are not configurable in this build.")
+	return true
+}
+
+func handleConfigCommand(stdout io.Writer, store *configStore, cfg config, args []string) bool {
+	if len(args) == 0 {
+		printUsage(stdout)
+		return true
+	}
+
+	switch args[0] {
+	case "show":
+		cfg.normalize()
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			fmt.Fprintf(stdout, "marshal config: %v\n", err)
+			return true
+		}
+		fmt.Fprintf(stdout, "%s\n", data)
+	case "path":
+		fmt.Fprintln(stdout, store.pathString())
+	case "init":
+		if err := store.save(cfg); err != nil {
+			fmt.Fprintf(stdout, "save config: %v\n", err)
+			return true
+		}
+		fmt.Fprintf(stdout, "initialized config at %s\n", store.pathString())
+	case "set":
+		if len(args) < 3 {
+			fmt.Fprintln(stdout, "usage: lyrics-display config set <emoji|emoji-char|offset-ms> <value>")
+			return true
+		}
+		switch args[1] {
+		case "emoji":
+			value, ok := parseOnOff(args[2])
+			if !ok {
+				fmt.Fprintln(stdout, "emoji expects on or off")
+				return true
+			}
+			cfg.ShowEmoji = value
+		case "emoji-char":
+			cfg.Emoji = args[2]
+		case "offset-ms":
+			value, err := strconv.Atoi(args[2])
+			if err != nil {
+				fmt.Fprintln(stdout, "offset-ms expects an integer")
+				return true
+			}
+			cfg.OffsetMS = value
+		default:
+			fmt.Fprintln(stdout, "supported keys: emoji, emoji-char, offset-ms")
+			return true
+		}
+
+		if err := store.save(cfg); err != nil {
+			fmt.Fprintf(stdout, "save config: %v\n", err)
+			return true
+		}
+		fmt.Fprintf(stdout, "updated config at %s\n", store.pathString())
+	default:
+		printUsage(stdout)
+	}
+	return true
+}
+
+func handleOffsetCommand(stdout io.Writer, store *configStore, cfg config, args []string) bool {
+	if len(args) == 0 {
+		fmt.Fprintln(stdout, "usage: lyrics-display offset [+100|-100|set 350]")
+		return true
+	}
+
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			fmt.Fprintln(stdout, "usage: lyrics-display offset set <milliseconds>")
+			return true
+		}
+		value, err := strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Fprintln(stdout, "offset set expects an integer")
+			return true
+		}
+		cfg.OffsetMS = value
+	default:
+		delta, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Fprintln(stdout, "offset expects +N, -N, or set N")
+			return true
+		}
+		cfg.OffsetMS += delta
+	}
+
+	if err := store.save(cfg); err != nil {
+		fmt.Fprintf(stdout, "save config: %v\n", err)
+		return true
+	}
+
+	updated, err := store.load()
+	if err != nil {
+		fmt.Fprintf(stdout, "reload config: %v\n", err)
+		return true
+	}
+	fmt.Fprintf(stdout, "offset_ms: %d\n", updated.OffsetMS)
+	return true
+}
+
+func parseOnOff(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "true", "1":
+		return true, true
+	case "off", "false", "0":
+		return false, true
+	default:
+		return false, false
+	}
 }
