@@ -10,6 +10,7 @@ Configuration and quality-of-life release.
 - CLI helper commands for `status`, `config`, and `offset`
 - Menu controls for lyric offset adjustments
 - Emoji prefix toggle and custom prefix support
+- Manual lyric source switching across search candidates
 - Homebrew background service support
 
 ### Notes

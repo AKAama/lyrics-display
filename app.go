@@ -14,24 +14,28 @@ import (
 )
 
 type app struct {
-	client       *neteaseClient
-	cache        *lyricCache
-	logger       *log.Logger
-	configStore  *configStore
-	config       config
-	cancel       context.CancelFunc
-	quitOnce     sync.Once
-	statusItem   *systray.MenuItem
-	trackItem    *systray.MenuItem
-	sourceItem   *systray.MenuItem
-	offsetItem   *systray.MenuItem
-	emojiItem    *systray.MenuItem
-	fasterItem   *systray.MenuItem
-	slowerItem   *systray.MenuItem
-	resetItem    *systray.MenuItem
-	pathItem     *systray.MenuItem
-	lastTitle    string
-	lastTrackKey string
+	client         *neteaseClient
+	cache          *lyricCache
+	logger         *log.Logger
+	configStore    *configStore
+	config         config
+	stateMu        sync.Mutex
+	currentTrack   nowPlaying
+	activeLyrics   lyricDocument
+	cancel         context.CancelFunc
+	quitOnce       sync.Once
+	statusItem     *systray.MenuItem
+	trackItem      *systray.MenuItem
+	sourceItem     *systray.MenuItem
+	offsetItem     *systray.MenuItem
+	emojiItem      *systray.MenuItem
+	fasterItem     *systray.MenuItem
+	slowerItem     *systray.MenuItem
+	resetItem      *systray.MenuItem
+	nextSourceItem *systray.MenuItem
+	pathItem       *systray.MenuItem
+	lastTitle      string
+	lastTrackKey   string
 }
 
 var (
@@ -68,6 +72,7 @@ func onReady() {
 	app.fasterItem = systray.AddMenuItem("歌词提前 100ms", "Advance lyric sync")
 	app.slowerItem = systray.AddMenuItem("歌词延后 100ms", "Delay lyric sync")
 	app.resetItem = systray.AddMenuItem("重置偏移为 350ms", "Reset lyric offset")
+	app.nextSourceItem = systray.AddMenuItem("换下一个歌词源", "Switch to the next lyric candidate")
 	app.pathItem = systray.AddMenuItem("", "Config file path")
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("退出", "Quit")
@@ -102,8 +107,6 @@ func (a *app) run(ctx context.Context) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
-	var activeLyrics lyricDocument
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -118,19 +121,29 @@ func (a *app) run(ctx context.Context) {
 
 			switch nowPlaying.State {
 			case stateStopped:
-				activeLyrics = lyricDocument{}
+				a.stateMu.Lock()
+				a.activeLyrics = lyricDocument{}
+				a.currentTrack = nowPlaying
+				a.stateMu.Unlock()
 				a.lastTrackKey = ""
 				a.renderIdle("Apple Music 未播放")
 			case statePaused:
+				activeLyrics := a.currentLyrics()
 				if activeLyrics.Track == "" || a.lastTrackKey != trackKey(nowPlaying.Track, nowPlaying.Artist) {
 					activeLyrics = a.loadLyrics(ctx, nowPlaying)
 				}
+				a.storePlaybackState(nowPlaying, activeLyrics)
 				a.renderPaused(nowPlaying, activeLyrics)
 			case statePlaying:
 				if a.lastTrackKey != trackKey(nowPlaying.Track, nowPlaying.Artist) {
-					activeLyrics = a.loadLyrics(ctx, nowPlaying)
+					activeLyrics := a.loadLyrics(ctx, nowPlaying)
 					a.lastTrackKey = trackKey(nowPlaying.Track, nowPlaying.Artist)
+					a.storePlaybackState(nowPlaying, activeLyrics)
+					a.renderLyric(nowPlaying, activeLyrics)
+					continue
 				}
+				activeLyrics := a.currentLyrics()
+				a.storePlaybackState(nowPlaying, activeLyrics)
 				a.renderLyric(nowPlaying, activeLyrics)
 			default:
 				a.renderIdle("等待 Apple Music")
@@ -170,10 +183,11 @@ func (a *app) renderLyric(np nowPlaying, doc lyricDocument) {
 	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
 
 	if doc.SourceID > 0 {
-		a.sourceItem.SetTitle(fmt.Sprintf("歌词源：网易云 #%d", doc.SourceID))
+		a.sourceItem.SetTitle(a.sourceTitle(doc))
 	} else {
 		a.sourceItem.SetTitle("歌词源：未命中，显示歌曲信息")
 	}
+	a.refreshSourceMenu(doc)
 }
 
 func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
@@ -185,6 +199,10 @@ func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
 	a.setTitle("暂停 | " + line)
 	a.statusItem.SetTitle("状态：暂停")
 	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
+	if doc.SourceID > 0 {
+		a.sourceItem.SetTitle(a.sourceTitle(doc))
+	}
+	a.refreshSourceMenu(doc)
 }
 
 func (a *app) renderIdle(status string) {
@@ -192,6 +210,7 @@ func (a *app) renderIdle(status string) {
 	a.statusItem.SetTitle("状态：" + status)
 	a.trackItem.SetTitle("歌曲：-")
 	a.sourceItem.SetTitle("歌词源：网易云音乐")
+	a.nextSourceItem.Disable()
 }
 
 func (a *app) renderError(message string) {
@@ -231,6 +250,8 @@ func (a *app) handleMenuActions(ctx context.Context) {
 			a.config.OffsetMS = int(defaultOffset / time.Millisecond)
 			a.persistConfig()
 			a.refreshConfigMenu()
+		case <-a.nextSourceItem.ClickedCh:
+			a.switchToNextSource(ctx)
 		case <-a.pathItem.ClickedCh:
 			a.logger.Printf("config path: %s", a.configStore.pathString())
 		}
@@ -253,4 +274,64 @@ func (a *app) refreshConfigMenu() {
 		a.emojiItem.SetTitle("Emoji：关闭")
 	}
 	a.pathItem.SetTitle("配置文件：" + a.configStore.pathString())
+}
+
+func (a *app) storePlaybackState(track nowPlaying, doc lyricDocument) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	a.currentTrack = track
+	a.activeLyrics = doc
+}
+
+func (a *app) currentLyrics() lyricDocument {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.activeLyrics
+}
+
+func (a *app) currentNowPlaying() nowPlaying {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.currentTrack
+}
+
+func (a *app) sourceTitle(doc lyricDocument) string {
+	total := len(doc.Candidates)
+	if total == 0 {
+		return fmt.Sprintf("歌词源：网易云 #%d", doc.SourceID)
+	}
+	return fmt.Sprintf("歌词源：%d/%d 网易云 #%d", doc.SourceIndex+1, total, doc.SourceID)
+}
+
+func (a *app) refreshSourceMenu(doc lyricDocument) {
+	if len(doc.Candidates) <= 1 {
+		a.nextSourceItem.SetTitle("换下一个歌词源（无更多候选）")
+		a.nextSourceItem.Disable()
+		return
+	}
+
+	nextIndex := (doc.SourceIndex + 1) % len(doc.Candidates)
+	next := doc.Candidates[nextIndex]
+	a.nextSourceItem.SetTitle(fmt.Sprintf("换下一个歌词源：%s - %s", trimForMenuBar(next.Name), trimForMenuBar(next.Artist)))
+	a.nextSourceItem.Enable()
+}
+
+func (a *app) switchToNextSource(ctx context.Context) {
+	currentTrack := a.currentNowPlaying()
+	currentLyrics := a.currentLyrics()
+	if currentTrack.Track == "" || len(currentLyrics.Candidates) <= 1 {
+		return
+	}
+
+	nextDoc, err := a.client.fetchNextLyrics(ctx, currentTrack.Track, currentTrack.Artist, currentLyrics)
+	if err != nil {
+		a.logger.Printf("switch source: %v", err)
+		a.statusItem.SetTitle("状态：切换歌词源失败")
+		return
+	}
+
+	a.cache.put(trackKey(currentTrack.Track, currentTrack.Artist), nextDoc)
+	a.storePlaybackState(currentTrack, nextDoc)
+	a.lastTitle = ""
+	a.renderLyric(currentTrack, nextDoc)
 }

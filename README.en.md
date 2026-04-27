@@ -25,6 +25,7 @@ It aims to stay lightweight, fast to launch, and easy to install.
 - Persistent config file support
 - CLI and menu controls for lyric offset tuning
 - Emoji prefix toggle and custom symbol support
+- Manual switching between lyric source candidates
 
 ## Quick Start
 
@@ -143,6 +144,8 @@ lyrics-display config set offset-ms 250
 lyrics-display offset +100
 lyrics-display offset -100
 ```
+
+If the current lyric match is wrong, use the menu bar action `换下一个歌词源` to cycle through the next NetEase search candidates.
 
 ## How It Works
 

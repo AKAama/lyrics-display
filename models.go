@@ -34,6 +34,15 @@ type lyricDocument struct {
 	Lines       []lyricLine
 	FetchedAt   time.Time
 	DisplayName string
+	Candidates  []lyricCandidate
+	SourceIndex int
+}
+
+type lyricCandidate struct {
+	ID     int64
+	Name   string
+	Artist string
+	Score  int
 }
 
 type lyricCache struct {

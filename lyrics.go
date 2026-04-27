@@ -17,12 +17,40 @@ import (
 var lrcPattern = regexp.MustCompile(`\[(\d{2,}):(\d{2})(?:\.(\d{1,3}))?\]([^\n\r]*)`)
 
 func (c *neteaseClient) fetchLyrics(ctx context.Context, track, artist string) (lyricDocument, error) {
-	songID, canonicalName, err := c.searchBestSong(ctx, track, artist)
+	candidates, err := c.searchCandidates(ctx, track, artist)
 	if err != nil {
 		return lyricDocument{}, err
 	}
 
-	endpoint := fmt.Sprintf("https://music.163.com/api/song/lyric?id=%d&lv=1&tv=0", songID)
+	for index := range candidates {
+		doc, err := c.fetchLyricsForCandidate(ctx, track, artist, candidates, index)
+		if err == nil {
+			return doc, nil
+		}
+	}
+
+	return lyricDocument{}, fmt.Errorf("no timed lyrics found for %s - %s", track, artist)
+}
+
+func (c *neteaseClient) fetchNextLyrics(ctx context.Context, track, artist string, current lyricDocument) (lyricDocument, error) {
+	if len(current.Candidates) == 0 {
+		return lyricDocument{}, fmt.Errorf("no candidates available")
+	}
+
+	for offset := 1; offset < len(current.Candidates)+1; offset++ {
+		index := (current.SourceIndex + offset) % len(current.Candidates)
+		doc, err := c.fetchLyricsForCandidate(ctx, track, artist, current.Candidates, index)
+		if err == nil {
+			return doc, nil
+		}
+	}
+
+	return current, fmt.Errorf("no alternative lyric sources worked")
+}
+
+func (c *neteaseClient) fetchLyricsForCandidate(ctx context.Context, track, artist string, candidates []lyricCandidate, index int) (lyricDocument, error) {
+	candidate := candidates[index]
+	endpoint := fmt.Sprintf("https://music.163.com/api/song/lyric?id=%d&lv=1&tv=0", candidate.ID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return lyricDocument{}, err
@@ -54,65 +82,64 @@ func (c *neteaseClient) fetchLyrics(ctx context.Context, track, artist string) (
 	return lyricDocument{
 		Track:       track,
 		Artist:      artist,
-		SourceID:    songID,
+		SourceID:    candidate.ID,
 		Lines:       lines,
 		FetchedAt:   time.Now(),
-		DisplayName: canonicalName,
+		DisplayName: candidate.Name,
+		Candidates:  candidates,
+		SourceIndex: index,
 	}, nil
 }
 
-func (c *neteaseClient) searchBestSong(ctx context.Context, track, artist string) (int64, string, error) {
+func (c *neteaseClient) searchCandidates(ctx context.Context, track, artist string) ([]lyricCandidate, error) {
 	query := strings.TrimSpace(track + " " + artist)
 	endpoint := "https://music.163.com/api/search/get?s=" + url.QueryEscape(query) + "&type=1&limit=8"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, "", err
+		return nil, err
 	}
 
 	addNetEaseHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return 0, "", fmt.Errorf("search request failed: %s %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("search request failed: %s %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var payload searchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return 0, "", err
+		return nil, err
 	}
 
 	if len(payload.Result.Songs) == 0 {
-		return 0, "", fmt.Errorf("no songs found for %s", query)
-	}
-
-	type candidate struct {
-		ID    int64
-		Name  string
-		Score int
+		return nil, fmt.Errorf("no songs found for %s", query)
 	}
 
 	expectedTrack := normalizeSongName(track)
 	expectedArtist := normalizeArtistName(artist)
 
-	var matches []candidate
+	var matches []lyricCandidate
 	for _, song := range payload.Result.Songs {
 		score := similarityScore(expectedTrack, normalizeSongName(song.Name))
 		artistScore := 0
+		artistNames := make([]string, 0, len(song.Artists))
 		for _, item := range song.Artists {
 			artistScore = max(artistScore, similarityScore(expectedArtist, normalizeArtistName(item.Name)))
+			artistNames = append(artistNames, item.Name)
 		}
 
-		matches = append(matches, candidate{
-			ID:    song.ID,
-			Name:  song.Name,
-			Score: score*3 + artistScore*2,
+		matches = append(matches, lyricCandidate{
+			ID:     song.ID,
+			Name:   song.Name,
+			Artist: strings.Join(artistNames, ", "),
+			Score:  score*3 + artistScore*2,
 		})
 	}
 
@@ -120,8 +147,7 @@ func (c *neteaseClient) searchBestSong(ctx context.Context, track, artist string
 		return matches[i].Score > matches[j].Score
 	})
 
-	best := matches[0]
-	return best.ID, best.Name, nil
+	return matches, nil
 }
 
 func addNetEaseHeaders(req *http.Request) {
