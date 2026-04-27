@@ -29,7 +29,7 @@
 ```bash
 brew tap AKAama/lyrics-display
 brew install lyrics-display
-lyrics-display
+brew services start lyrics-display
 ```
 
 首次启动时，macOS 可能会请求自动化权限。
@@ -47,7 +47,7 @@ lyrics-display
 ```bash
 brew tap AKAama/lyrics-display
 brew install lyrics-display
-lyrics-display
+brew services start lyrics-display
 ```
 
 ### 方式二：源码编译
@@ -57,12 +57,20 @@ go build -o lyrics-display .
 ./lyrics-display
 ```
 
+如果你只是临时手动运行，也可以直接执行：
+
+```bash
+lyrics-display
+```
+
 ## 使用方式
 
 ```bash
 lyrics-display
 lyrics-display --help
 lyrics-display --version
+brew services start lyrics-display
+brew services stop lyrics-display
 ```
 
 如需手动调整歌词时间偏移：
@@ -152,3 +160,4 @@ brew install lyrics-display
 - 如果菜单栏没有显示内容，先确认程序已经启动且 `Music` 已打开。
 - 如果只显示歌曲名和歌手，通常表示当前歌曲没有匹配到同步歌词。
 - 如果歌词快了或慢了，可以调整 `LYRICS_OFFSET_MS` 后重新启动程序。
+- 如果你直接在终端里运行 `lyrics-display`，关闭终端后程序也会退出；长期使用请改用 `brew services start lyrics-display`。

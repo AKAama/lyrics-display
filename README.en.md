@@ -29,7 +29,7 @@ It aims to stay lightweight, fast to launch, and easy to install.
 ```bash
 brew tap AKAama/lyrics-display
 brew install lyrics-display
-lyrics-display
+brew services start lyrics-display
 ```
 
 On first launch, macOS may ask for permission to control `Music`.
@@ -54,6 +54,12 @@ brew install lyrics-display
 Then start it with:
 
 ```bash
+brew services start lyrics-display
+```
+
+If you only want to run it manually for the current terminal session:
+
+```bash
 lyrics-display
 ```
 
@@ -70,6 +76,8 @@ go build -o lyrics-display .
 lyrics-display
 lyrics-display --help
 lyrics-display --version
+brew services start lyrics-display
+brew services stop lyrics-display
 ```
 
 Optional environment variable:
@@ -145,3 +153,4 @@ make version
 - If nothing appears in the menu bar, confirm the app is running and `Music` is open.
 - If only song title and artist appear, the current track may not have matched synced lyrics.
 - If the lyric feels early or late, adjust `LYRICS_OFFSET_MS` and restart the app.
+- If you launch `lyrics-display` directly from a terminal, closing that terminal will also stop the app; use `brew services start lyrics-display` for background use.
