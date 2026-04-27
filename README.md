@@ -4,6 +4,8 @@
 
 It is written in Go, reads playback state from Apple Music through AppleScript, fetches timed lyrics from NetEase Music, and updates the menu bar every `500ms`.
 
+Chinese documentation is available at `README.zh-CN.md`.
+
 ## Features
 
 - Real-time Apple Music lyric display in the macOS menu bar
@@ -83,6 +85,14 @@ Before publishing:
 
 If you later want a cleaner Homebrew setup, you can still split the Formula into a separate tap repo like `homebrew-lyrics-display`, but you do not need that for the first release.
 
+Current approach:
+
+- This source repository also acts as the Homebrew tap
+- The formula lives at `Formula/lyrics-display.rb`
+- Users can install through `brew tap AKAama/lyrics-display && brew install lyrics-display`
+
+If the project grows, you can later move the formula into a dedicated tap repository such as `AKAama/homebrew-lyrics-display` without changing the formula name.
+
 ## Local Development
 
 ```bash
@@ -95,6 +105,7 @@ make version
 
 - Changelog: `CHANGELOG.md`
 - GitHub release draft text: `docs/release-v0.1.0.md`
+- Chinese guide: `README.zh-CN.md`
 
 ## Notes
 
