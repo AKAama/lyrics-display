@@ -1,3 +1,5 @@
+[简体中文](./README.md) | [English](./README.en.md)
+
 # lyrics-display
 
 `lyrics-display` 是一个运行在 macOS 菜单栏上的 Apple Music 实时歌词工具。
@@ -140,7 +142,8 @@ brew install lyrics-display
 
 ## 相关文档
 
-- 英文说明：`README.md`
+- 默认首页：`README.md`
+- 英文说明：`README.en.md`
 - 更新记录：`CHANGELOG.md`
 - `v0.1.0` 发布文案：`docs/release-v0.1.0.md`
 
