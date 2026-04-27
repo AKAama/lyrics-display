@@ -6,6 +6,16 @@ It is written in Go, reads playback state from Apple Music through AppleScript, 
 
 Chinese documentation is available at `README.zh-CN.md`.
 
+## Why
+
+`lyrics-display` is built for a simple workflow:
+
+- keep Apple Music playing
+- keep the current lyric visible in the menu bar
+- avoid opening a separate floating lyric window
+
+It aims to stay lightweight, fast to launch, and easy to install.
+
 ## Features
 
 - Real-time Apple Music lyric display in the macOS menu bar
@@ -13,6 +23,16 @@ Chinese documentation is available at `README.zh-CN.md`.
 - In-memory lyric cache per track
 - Fallback to `Track - Artist` when no lyric is found
 - Adjustable lyric sync offset through `LYRICS_OFFSET_MS`
+
+## Quick Start
+
+```bash
+brew tap AKAama/lyrics-display
+brew install lyrics-display
+lyrics-display
+```
+
+On first launch, macOS may ask for permission to control `Music`.
 
 ## Requirements
 
@@ -60,7 +80,7 @@ LYRICS_OFFSET_MS=450 lyrics-display
 
 Default offset is `350ms`.
 
-## First Run
+## First Run And Permissions
 
 The first time you start the app, macOS may ask for permission to control `Music`.
 
@@ -69,6 +89,13 @@ If lyrics do not appear, check:
 `System Settings -> Privacy & Security -> Automation`
 
 and allow your terminal or the installed binary to control `Music`.
+
+## How It Works
+
+1. Read the current Apple Music track and playback position through AppleScript.
+2. Search NetEase Music for the best lyric match.
+3. Parse the returned `LRC` data into a timed lyric timeline.
+4. Update the current lyric line in the macOS menu bar every `500ms`.
 
 ## Homebrew Release Flow
 
@@ -112,3 +139,9 @@ make version
 - The lyric source depends on NetEase Music search and lyric endpoints.
 - Some songs may match imperfectly when titles include `Live`, `Remastered`, or alternate naming.
 - Menu bar updates are intentionally conservative to reduce flicker.
+
+## Troubleshooting
+
+- If nothing appears in the menu bar, confirm the app is running and `Music` is open.
+- If only song title and artist appear, the current track may not have matched synced lyrics.
+- If the lyric feels early or late, adjust `LYRICS_OFFSET_MS` and restart the app.
