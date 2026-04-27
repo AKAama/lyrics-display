@@ -1,0 +1,256 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/getlantern/systray"
+)
+
+type app struct {
+	client       *neteaseClient
+	cache        *lyricCache
+	logger       *log.Logger
+	configStore  *configStore
+	config       config
+	cancel       context.CancelFunc
+	quitOnce     sync.Once
+	statusItem   *systray.MenuItem
+	trackItem    *systray.MenuItem
+	sourceItem   *systray.MenuItem
+	offsetItem   *systray.MenuItem
+	emojiItem    *systray.MenuItem
+	fasterItem   *systray.MenuItem
+	slowerItem   *systray.MenuItem
+	resetItem    *systray.MenuItem
+	pathItem     *systray.MenuItem
+	lastTitle    string
+	lastTrackKey string
+}
+
+var (
+	currentConfigStore *configStore
+	currentConfig      config
+)
+
+func startMenuBarApp(store *configStore, cfg config) {
+	currentConfigStore = store
+	currentConfig = cfg
+	systray.Run(onReady, onExit)
+}
+
+func onReady() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	app := &app{
+		client:      newNetEaseClient(),
+		cache:       newLyricCache(),
+		logger:      log.New(os.Stdout, "[lyrics-display] ", log.LstdFlags),
+		configStore: currentConfigStore,
+		config:      currentConfig,
+		cancel:      cancel,
+	}
+
+	systray.SetTooltip("Apple Music Lyrics Display")
+	systray.SetTitle(app.config.titlePrefix() + "启动中…")
+
+	app.statusItem = systray.AddMenuItem("状态：启动中", "Current status")
+	app.trackItem = systray.AddMenuItem("歌曲：-", "Current track")
+	app.sourceItem = systray.AddMenuItem("歌词源：网易云音乐", "Lyric provider")
+	app.offsetItem = systray.AddMenuItem("", "Current lyric offset")
+	app.emojiItem = systray.AddMenuItem("", "Toggle emoji prefix")
+	app.fasterItem = systray.AddMenuItem("歌词提前 100ms", "Advance lyric sync")
+	app.slowerItem = systray.AddMenuItem("歌词延后 100ms", "Delay lyric sync")
+	app.resetItem = systray.AddMenuItem("重置偏移为 350ms", "Reset lyric offset")
+	app.pathItem = systray.AddMenuItem("", "Config file path")
+	systray.AddSeparator()
+	quitItem := systray.AddMenuItem("退出", "Quit")
+
+	app.refreshConfigMenu()
+
+	go func() {
+		select {
+		case <-quitItem.ClickedCh:
+			app.quit()
+		case <-ctx.Done():
+			app.quit()
+		}
+	}()
+
+	go app.handleMenuActions(ctx)
+	go app.run(ctx)
+}
+
+func onExit() {}
+
+func (a *app) quit() {
+	a.quitOnce.Do(func() {
+		if a.cancel != nil {
+			a.cancel()
+		}
+		systray.Quit()
+	})
+}
+
+func (a *app) run(ctx context.Context) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var activeLyrics lyricDocument
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			nowPlaying, err := readNowPlaying(ctx)
+			if err != nil {
+				a.logger.Printf("read player state: %v", err)
+				a.renderError("未获取到 Apple Music 状态")
+				continue
+			}
+
+			switch nowPlaying.State {
+			case stateStopped:
+				activeLyrics = lyricDocument{}
+				a.lastTrackKey = ""
+				a.renderIdle("Apple Music 未播放")
+			case statePaused:
+				if activeLyrics.Track == "" || a.lastTrackKey != trackKey(nowPlaying.Track, nowPlaying.Artist) {
+					activeLyrics = a.loadLyrics(ctx, nowPlaying)
+				}
+				a.renderPaused(nowPlaying, activeLyrics)
+			case statePlaying:
+				if a.lastTrackKey != trackKey(nowPlaying.Track, nowPlaying.Artist) {
+					activeLyrics = a.loadLyrics(ctx, nowPlaying)
+					a.lastTrackKey = trackKey(nowPlaying.Track, nowPlaying.Artist)
+				}
+				a.renderLyric(nowPlaying, activeLyrics)
+			default:
+				a.renderIdle("等待 Apple Music")
+			}
+		}
+	}
+}
+
+func (a *app) loadLyrics(ctx context.Context, nowPlaying nowPlaying) lyricDocument {
+	key := trackKey(nowPlaying.Track, nowPlaying.Artist)
+	if cached, ok := a.cache.get(key); ok {
+		return cached
+	}
+
+	doc, err := a.client.fetchLyrics(ctx, nowPlaying.Track, nowPlaying.Artist)
+	if err != nil {
+		a.logger.Printf("fetch lyrics for %s: %v", key, err)
+		return lyricDocument{
+			Track:       nowPlaying.Track,
+			Artist:      nowPlaying.Artist,
+			DisplayName: fallbackLine(nowPlaying.Track, nowPlaying.Artist),
+		}
+	}
+
+	a.cache.put(key, doc)
+	return doc
+}
+
+func (a *app) renderLyric(np nowPlaying, doc lyricDocument) {
+	line := currentLyric(doc.Lines, np.Position+a.config.offsetDuration())
+	if line == "" {
+		line = fallbackLine(np.Track, np.Artist)
+	}
+
+	a.setTitle(line)
+	a.statusItem.SetTitle("状态：播放中")
+	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
+
+	if doc.SourceID > 0 {
+		a.sourceItem.SetTitle(fmt.Sprintf("歌词源：网易云 #%d", doc.SourceID))
+	} else {
+		a.sourceItem.SetTitle("歌词源：未命中，显示歌曲信息")
+	}
+}
+
+func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
+	line := currentLyric(doc.Lines, np.Position+a.config.offsetDuration())
+	if line == "" {
+		line = fallbackLine(np.Track, np.Artist)
+	}
+
+	a.setTitle("暂停 | " + line)
+	a.statusItem.SetTitle("状态：暂停")
+	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
+}
+
+func (a *app) renderIdle(status string) {
+	a.setTitle(status)
+	a.statusItem.SetTitle("状态：" + status)
+	a.trackItem.SetTitle("歌曲：-")
+	a.sourceItem.SetTitle("歌词源：网易云音乐")
+}
+
+func (a *app) renderError(message string) {
+	a.setTitle(message)
+	a.statusItem.SetTitle("状态：" + message)
+}
+
+func (a *app) setTitle(line string) {
+	title := a.config.titlePrefix() + trimForMenuBar(line)
+	if title == a.lastTitle {
+		return
+	}
+
+	systray.SetTitle(title)
+	a.lastTitle = title
+}
+
+func (a *app) handleMenuActions(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.emojiItem.ClickedCh:
+			a.config.ShowEmoji = !a.config.ShowEmoji
+			a.persistConfig()
+			a.refreshConfigMenu()
+			a.lastTitle = ""
+		case <-a.fasterItem.ClickedCh:
+			a.config.OffsetMS -= 100
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.slowerItem.ClickedCh:
+			a.config.OffsetMS += 100
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.resetItem.ClickedCh:
+			a.config.OffsetMS = int(defaultOffset / time.Millisecond)
+			a.persistConfig()
+			a.refreshConfigMenu()
+		case <-a.pathItem.ClickedCh:
+			a.logger.Printf("config path: %s", a.configStore.pathString())
+		}
+	}
+}
+
+func (a *app) persistConfig() {
+	a.config.normalize()
+	if err := a.configStore.save(a.config); err != nil {
+		a.logger.Printf("save config: %v", err)
+	}
+}
+
+func (a *app) refreshConfigMenu() {
+	a.config.normalize()
+	a.offsetItem.SetTitle(fmt.Sprintf("歌词偏移：%dms", a.config.OffsetMS))
+	if a.config.ShowEmoji {
+		a.emojiItem.SetTitle("Emoji：开启")
+	} else {
+		a.emojiItem.SetTitle("Emoji：关闭")
+	}
+	a.pathItem.SetTitle("配置文件：" + a.configStore.pathString())
+}
