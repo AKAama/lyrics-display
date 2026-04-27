@@ -27,7 +27,7 @@
 ## 快速开始
 
 ```bash
-brew tap AKAama/lyrics-display
+brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
 brew install lyrics-display
 lyrics-display
 ```
@@ -45,7 +45,7 @@ lyrics-display
 ### 方式一：Homebrew
 
 ```bash
-brew tap AKAama/lyrics-display
+brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
 brew install lyrics-display
 lyrics-display
 ```
@@ -98,7 +98,7 @@ LYRICS_OFFSET_MS=450 lyrics-display
 
 - 代码仓库就是 `AKAama/lyrics-display`
 - Homebrew Formula 直接放在仓库里的 `Formula/lyrics-display.rb`
-- 用户安装时执行 `brew tap AKAama/lyrics-display`
+- 用户安装时执行 `brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display`
 
 这种方式的优点是：
 
@@ -119,7 +119,7 @@ LYRICS_OFFSET_MS=450 lyrics-display
 这样用户安装时会变成：
 
 ```bash
-brew tap AKAama/lyrics-display
+brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
 brew install lyrics-display
 ```
 

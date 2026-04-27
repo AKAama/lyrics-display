@@ -27,7 +27,7 @@ It aims to stay lightweight, fast to launch, and easy to install.
 ## Quick Start
 
 ```bash
-brew tap AKAama/lyrics-display
+brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
 brew install lyrics-display
 lyrics-display
 ```
@@ -47,7 +47,7 @@ On first launch, macOS may ask for permission to control `Music`.
 After you create a release and update the Formula checksum:
 
 ```bash
-brew tap AKAama/lyrics-display
+brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
 brew install lyrics-display
 ```
 
@@ -108,7 +108,7 @@ Before publishing:
 3. Download the source tarball for that tag from GitHub.
 4. Compute its `sha256`.
 5. Update `Formula/lyrics-display.rb` with the real tag URL and `sha256`.
-6. Users can then run `brew tap AKAama/lyrics-display && brew install lyrics-display`.
+6. Users can then run `brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display && brew install lyrics-display`.
 
 If you later want a cleaner Homebrew setup, you can still split the Formula into a separate tap repo like `homebrew-lyrics-display`, but you do not need that for the first release.
 
@@ -116,7 +116,7 @@ Current approach:
 
 - This source repository also acts as the Homebrew tap
 - The formula lives at `Formula/lyrics-display.rb`
-- Users can install through `brew tap AKAama/lyrics-display && brew install lyrics-display`
+- Users can install through `brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display && brew install lyrics-display`
 
 If the project grows, you can later move the formula into a dedicated tap repository such as `AKAama/homebrew-lyrics-display` without changing the formula name.
 
