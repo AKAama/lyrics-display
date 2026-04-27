@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.1
+
+Configuration and quality-of-life release.
+
+### Added
+
+- Persistent config file support
+- CLI helper commands for `status`, `config`, and `offset`
+- Menu controls for lyric offset adjustments
+- Emoji prefix toggle and custom prefix support
+- Homebrew background service support
+
+### Notes
+
+- If launched through `brew services`, quitting from the menu only exits the current process; use `brew services stop akaama/lyrics-display/lyrics-display` to fully stop it
+- Menu bar font and text color remain controlled by macOS and are not configurable in this build
+
 ## v0.1.0
 
 Initial public release.

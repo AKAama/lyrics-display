@@ -200,4 +200,5 @@ make version
 - If only song title and artist appear, the current track may not have matched synced lyrics.
 - If the lyric feels early or late, adjust `LYRICS_OFFSET_MS` and restart the app.
 - If you launch `lyrics-display` directly from a terminal, closing that terminal will also stop the app; use `brew services start akaama/lyrics-display/lyrics-display` for background use.
+- If you started the app through `brew services`, the menu's quit action only stops the current process and Homebrew may start it again automatically. To fully stop it, run `brew services stop akaama/lyrics-display/lyrics-display`. To start it again, run `brew services start akaama/lyrics-display/lyrics-display`.
 - This build does not support custom menu bar font or text color. On macOS, those are controlled by the system menu bar and are not exposed through the current `systray` approach.

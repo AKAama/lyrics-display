@@ -212,4 +212,5 @@ brew install lyrics-display
 - 如果只显示歌曲名和歌手，通常表示当前歌曲没有匹配到同步歌词。
 - 如果歌词快了或慢了，可以调整 `LYRICS_OFFSET_MS` 后重新启动程序。
 - 如果你直接在终端里运行 `lyrics-display`，关闭终端后程序也会退出；长期使用请改用 `brew services start akaama/lyrics-display/lyrics-display`。
+- 如果你是通过 `brew services` 启动的，菜单里的“退出”只会结束当前进程，服务管理器可能会自动再次拉起它。真正停用请执行 `brew services stop akaama/lyrics-display/lyrics-display`，恢复运行请执行 `brew services start akaama/lyrics-display/lyrics-display`。
 - 当前这个版本不能自定义菜单栏文字颜色或字体。这不是缺少配置项，而是因为 macOS 菜单栏文字样式由系统控制，`systray` 路线本身不开放这类定制。
