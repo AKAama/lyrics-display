@@ -91,6 +91,11 @@ make run
 make version
 ```
 
+## Release Notes
+
+- Changelog: `CHANGELOG.md`
+- GitHub release draft text: `docs/release-v0.1.0.md`
+
 ## Notes
 
 - The lyric source depends on NetEase Music search and lyric endpoints.
