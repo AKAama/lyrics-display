@@ -27,7 +27,7 @@
 ## 快速开始
 
 ```bash
-brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
+brew tap AKAama/lyrics-display
 brew install lyrics-display
 lyrics-display
 ```
@@ -45,7 +45,7 @@ lyrics-display
 ### 方式一：Homebrew
 
 ```bash
-brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
+brew tap AKAama/lyrics-display
 brew install lyrics-display
 lyrics-display
 ```
@@ -92,38 +92,33 @@ LYRICS_OFFSET_MS=450 lyrics-display
 
 ## Homebrew 说明
 
-本项目当前采用“源码仓库同时兼作 tap 仓库”的方式。
+本项目当前使用独立的 Homebrew tap 仓库。
 
 也就是说：
 
-- 代码仓库就是 `AKAama/lyrics-display`
-- Homebrew Formula 直接放在仓库里的 `Formula/lyrics-display.rb`
-- 用户安装时执行 `brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display`
+- 源码仓库是 `AKAama/lyrics-display`
+- tap 仓库是 `AKAama/homebrew-lyrics-display`
+- Homebrew Formula 由 tap 仓库提供
 
 这种方式的优点是：
 
-- 第一个版本上线最快
-- 不需要额外维护一个 `homebrew-lyrics-display` 仓库
-- 适合个人项目或早期 MVP
+- 符合 Homebrew 的默认命名约定
+- 用户可以直接使用标准的 `brew tap` 命令
+- 源码仓库和分发仓库职责更清晰
 
-需要注意的是，Homebrew 的 tap 通常更常见的命名方式是单独建一个仓库，例如：
+当前结构就是：
 
-`homebrew-lyrics-display`
-
-如果以后你希望这条分发链路更标准，可以演进成：
-
-1. 主仓库继续放源码：`AKAama/lyrics-display`
-2. 新建 tap 仓库：`AKAama/homebrew-lyrics-display`
-3. 只把 Formula 放到 tap 仓库里
+1. 主仓库放源码：`AKAama/lyrics-display`
+2. tap 仓库放 Formula：`AKAama/homebrew-lyrics-display`
 
 这样用户安装时会变成：
 
 ```bash
-brew tap AKAama/lyrics-display https://github.com/AKAama/lyrics-display
+brew tap AKAama/lyrics-display
 brew install lyrics-display
 ```
 
-对用户来说命令几乎不变，但仓库职责会更清晰。
+这样用户体验和常见的第三方 Homebrew 包一致。
 
 ## 发版流程
 
