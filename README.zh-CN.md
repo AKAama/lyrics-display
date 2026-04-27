@@ -97,6 +97,8 @@ brew services stop akaama/lyrics-display/lyrics-display
 ~/Library/Application Support/lyrics-display/config.json
 ```
 
+配置文件支持 `JSONC` 风格注释，也就是可以写 `//` 和 `/* ... */` 注释。
+
 你也可以通过下面的命令查看真实路径：
 
 ```bash
@@ -123,11 +125,11 @@ lyrics-display config show
 
 默认配置大致如下：
 
-```json
+```jsonc
 {
   "show_emoji": true,
   "emoji": "♪",
-  "offset_ms": 350
+  "offset_ms": 350 // 正数表示延后，负数表示提前
 }
 ```
 

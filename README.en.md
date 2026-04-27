@@ -104,6 +104,8 @@ The default config path is:
 ~/Library/Application Support/lyrics-display/config.json
 ```
 
+The config file supports `JSONC`-style comments, including `//` and `/* ... */`.
+
 You can print the exact path with:
 
 ```bash
@@ -130,11 +132,11 @@ lyrics-display config show
 
 Default config example:
 
-```json
+```jsonc
 {
   "show_emoji": true,
   "emoji": "♪",
-  "offset_ms": 350
+  "offset_ms": 350 // positive delays lyrics, negative advances them
 }
 ```
 

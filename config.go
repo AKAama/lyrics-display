@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -62,7 +63,12 @@ func (s *configStore) load() (config, error) {
 		return cfg, err
 	}
 
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	cleaned, err := stripJSONComments(data)
+	if err != nil {
+		return cfg, err
+	}
+
+	if err := json.Unmarshal(cleaned, &cfg); err != nil {
 		return cfg, err
 	}
 
@@ -110,4 +116,77 @@ func (c config) titlePrefix() string {
 
 func (c config) offsetDuration() time.Duration {
 	return time.Duration(c.OffsetMS) * time.Millisecond
+}
+
+func stripJSONComments(input []byte) ([]byte, error) {
+	var out bytes.Buffer
+
+	inString := false
+	escaped := false
+	inLineComment := false
+	inBlockComment := false
+
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+
+		if inLineComment {
+			if ch == '\n' {
+				inLineComment = false
+				out.WriteByte(ch)
+			}
+			continue
+		}
+
+		if inBlockComment {
+			if ch == '*' && i+1 < len(input) && input[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+
+		if inString {
+			out.WriteByte(ch)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			out.WriteByte(ch)
+			continue
+		}
+
+		if ch == '/' && i+1 < len(input) {
+			next := input[i+1]
+			if next == '/' {
+				inLineComment = true
+				i++
+				continue
+			}
+			if next == '*' {
+				inBlockComment = true
+				i++
+				continue
+			}
+		}
+
+		out.WriteByte(ch)
+	}
+
+	if inBlockComment {
+		return nil, errors.New("unterminated block comment in config file")
+	}
+
+	return out.Bytes(), nil
 }
