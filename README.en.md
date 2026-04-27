@@ -23,8 +23,7 @@ It aims to stay lightweight, fast to launch, and easy to install.
 - In-memory lyric cache per track
 - Fallback to `Track - Artist` when no lyric is found
 - Persistent config file support
-- CLI and menu controls for lyric offset tuning
-- Emoji prefix toggle and custom symbol support
+- Config-file-based emoji and lyric offset tuning
 - Manual switching between lyric source candidates
 
 ## Quick Start
@@ -80,13 +79,7 @@ lyrics-display
 lyrics-display --help
 lyrics-display --version
 lyrics-display status
-lyrics-display config show
 lyrics-display config path
-lyrics-display config set emoji off
-lyrics-display config set emoji-char "🎵"
-lyrics-display config set offset-ms 450
-lyrics-display offset +100
-lyrics-display offset -100
 brew services start akaama/lyrics-display/lyrics-display
 brew services stop akaama/lyrics-display/lyrics-display
 ```
@@ -135,14 +128,22 @@ Show the current config:
 lyrics-display config show
 ```
 
-Examples:
+Default config example:
+
+```json
+{
+  "show_emoji": true,
+  "emoji": "♪",
+  "offset_ms": 350
+}
+```
+
+Recommended flow:
 
 ```bash
-lyrics-display config set emoji off
-lyrics-display config set emoji-char "🎵"
-lyrics-display config set offset-ms 250
-lyrics-display offset +100
-lyrics-display offset -100
+1. Click `打开配置文件` from the menu bar menu
+2. Edit the config file directly
+3. Save it and restart the app or restart the background service
 ```
 
 If the current lyric match is wrong, use the menu bar action `换下一个歌词源` to cycle through the next NetEase search candidates.

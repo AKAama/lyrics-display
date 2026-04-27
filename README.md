@@ -23,8 +23,7 @@
 - 按歌曲缓存歌词，减少重复请求
 - 没有同步歌词时自动回退为 `歌曲名 - 歌手`
 - 支持持久化配置文件
-- 支持命令行和菜单内调整歌词同步偏移
-- 支持 Emoji 前缀开关和自定义符号
+- 支持通过配置文件调整 Emoji 和歌词偏移
 - 支持在候选歌词源之间手动切换
 
 ## 快速开始
@@ -73,13 +72,7 @@ lyrics-display
 lyrics-display --help
 lyrics-display --version
 lyrics-display status
-lyrics-display config show
 lyrics-display config path
-lyrics-display config set emoji off
-lyrics-display config set emoji-char "🎵"
-lyrics-display config set offset-ms 450
-lyrics-display offset +100
-lyrics-display offset -100
 brew services start akaama/lyrics-display/lyrics-display
 brew services stop akaama/lyrics-display/lyrics-display
 ```
@@ -128,19 +121,22 @@ lyrics-display config init
 lyrics-display config show
 ```
 
-快速修改示例：
+默认配置大致如下：
 
-```bash
-lyrics-display config set emoji off
-lyrics-display config set emoji-char "🎵"
-lyrics-display config set offset-ms 250
+```json
+{
+  "show_emoji": true,
+  "emoji": "♪",
+  "offset_ms": 350
+}
 ```
 
-或者直接做偏移微调：
+推荐做法：
 
 ```bash
-lyrics-display offset +100
-lyrics-display offset -100
+1. 在菜单栏菜单中点击 `打开配置文件`
+2. 直接编辑配置文件
+3. 保存后重启程序或重启后台服务
 ```
 
 如果当前歌词匹配不准，可以直接在菜单栏菜单里点击 `换下一个歌词源`，程序会按候选顺序切到下一条网易云搜索结果。

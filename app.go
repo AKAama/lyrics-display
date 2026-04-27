@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -27,11 +28,6 @@ type app struct {
 	statusItem     *systray.MenuItem
 	trackItem      *systray.MenuItem
 	sourceItem     *systray.MenuItem
-	offsetItem     *systray.MenuItem
-	emojiItem      *systray.MenuItem
-	fasterItem     *systray.MenuItem
-	slowerItem     *systray.MenuItem
-	resetItem      *systray.MenuItem
 	nextSourceItem *systray.MenuItem
 	pathItem       *systray.MenuItem
 	lastTitle      string
@@ -67,17 +63,10 @@ func onReady() {
 	app.statusItem = systray.AddMenuItem("状态：启动中", "Current status")
 	app.trackItem = systray.AddMenuItem("歌曲：-", "Current track")
 	app.sourceItem = systray.AddMenuItem("歌词源：网易云音乐", "Lyric provider")
-	app.offsetItem = systray.AddMenuItem("", "Current lyric offset")
-	app.emojiItem = systray.AddMenuItem("", "Toggle emoji prefix")
-	app.fasterItem = systray.AddMenuItem("歌词提前 100ms", "Advance lyric sync")
-	app.slowerItem = systray.AddMenuItem("歌词延后 100ms", "Delay lyric sync")
-	app.resetItem = systray.AddMenuItem("重置偏移为 350ms", "Reset lyric offset")
 	app.nextSourceItem = systray.AddMenuItem("换下一个歌词源", "Switch to the next lyric candidate")
-	app.pathItem = systray.AddMenuItem("", "Config file path")
+	app.pathItem = systray.AddMenuItem("打开配置文件", "Open config file in Finder")
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("退出", "Quit")
-
-	app.refreshConfigMenu()
 
 	go func() {
 		select {
@@ -233,27 +222,13 @@ func (a *app) handleMenuActions(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-a.emojiItem.ClickedCh:
-			a.config.ShowEmoji = !a.config.ShowEmoji
-			a.persistConfig()
-			a.refreshConfigMenu()
-			a.lastTitle = ""
-		case <-a.fasterItem.ClickedCh:
-			a.config.OffsetMS -= 100
-			a.persistConfig()
-			a.refreshConfigMenu()
-		case <-a.slowerItem.ClickedCh:
-			a.config.OffsetMS += 100
-			a.persistConfig()
-			a.refreshConfigMenu()
-		case <-a.resetItem.ClickedCh:
-			a.config.OffsetMS = int(defaultOffset / time.Millisecond)
-			a.persistConfig()
-			a.refreshConfigMenu()
 		case <-a.nextSourceItem.ClickedCh:
 			a.switchToNextSource(ctx)
 		case <-a.pathItem.ClickedCh:
-			a.logger.Printf("config path: %s", a.configStore.pathString())
+			if err := a.openConfigInFinder(); err != nil {
+				a.logger.Printf("open config in finder: %v", err)
+				a.statusItem.SetTitle("状态：打开配置文件失败")
+			}
 		}
 	}
 }
@@ -263,17 +238,6 @@ func (a *app) persistConfig() {
 	if err := a.configStore.save(a.config); err != nil {
 		a.logger.Printf("save config: %v", err)
 	}
-}
-
-func (a *app) refreshConfigMenu() {
-	a.config.normalize()
-	a.offsetItem.SetTitle(fmt.Sprintf("歌词偏移：%dms", a.config.OffsetMS))
-	if a.config.ShowEmoji {
-		a.emojiItem.SetTitle("Emoji：开启")
-	} else {
-		a.emojiItem.SetTitle("Emoji：关闭")
-	}
-	a.pathItem.SetTitle("配置文件：" + a.configStore.pathString())
 }
 
 func (a *app) storePlaybackState(track nowPlaying, doc lyricDocument) {
@@ -334,4 +298,18 @@ func (a *app) switchToNextSource(ctx context.Context) {
 	a.storePlaybackState(currentTrack, nextDoc)
 	a.lastTitle = ""
 	a.renderLyric(currentTrack, nextDoc)
+}
+
+func (a *app) openConfigInFinder() error {
+	if _, err := os.Stat(a.configStore.pathString()); err != nil {
+		if os.IsNotExist(err) {
+			if err := a.configStore.save(a.config); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return exec.Command("open", "-R", a.configStore.pathString()).Run()
 }
