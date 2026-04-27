@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.3
+
+Configuration workflow cleanup release.
+
+### Changed
+
+- Simplified the menu bar menu by removing direct emoji and offset toggles
+- Moved advanced customization back to the config file as the primary editing path
+- Added a menu action to reveal the config file directly in Finder
+
+### Notes
+
+- Day-to-day controls stay lightweight in the menu bar
+- Emoji and lyric offset are still supported, but are now intended to be edited through the config file
+
 ## v0.1.2
 
 Lyric source correction release.
