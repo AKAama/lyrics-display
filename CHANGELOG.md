@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.2
+
+Lyric source correction release.
+
+### Added
+
+- Manual menu action to switch to the next lyric source candidate
+- Candidate tracking so users can cycle through alternative NetEase matches for the current song
+- Source status text showing the current candidate position
+
+### Notes
+
+- This release is focused on fixing wrong lyric matches without requiring a full re-search
+- If the first search result is inaccurate, users can now correct it directly from the menu bar
+
 ## v0.1.1
 
 Configuration and quality-of-life release.
