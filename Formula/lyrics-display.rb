@@ -1,8 +1,8 @@
 class LyricsDisplay < Formula
   desc "Show real-time Apple Music lyrics in the macOS menu bar"
   homepage "https://github.com/AKAama/lyrics-display"
-  url "https://github.com/AKAama/lyrics-display/archive/refs/tags/v0.1.3.tar.gz"
-  sha256 "7c1948872886b1d88b41590e785cde4dc51be2b42d4f3087fb56b7e91800cc49"
+  url "https://github.com/AKAama/lyrics-display/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "5556bb3cb4125484a0df477fa04b81887f1b937bf203df797491fd3c468647eb"
   license "MIT"
 
   depends_on "go" => :build
