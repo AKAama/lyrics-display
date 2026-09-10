@@ -186,7 +186,7 @@ lyrics-display config show
 也就是说：
 
 - 源码仓库是 `AKAama/lyrics-display`
-- tap 仓库是 `AKAama/homebrew-lyrics-display`
+- tap 仓库是 [AKAama/homebrew-lyrics-display](https://github.com/AKAama/homebrew-lyrics-display)
 - Homebrew Formula 由 tap 仓库提供
 
 这种方式的优点是：
@@ -198,7 +198,7 @@ lyrics-display config show
 当前结构就是：
 
 1. 主仓库放源码：`AKAama/lyrics-display`
-2. tap 仓库放 Formula：`AKAama/homebrew-lyrics-display`
+2. tap 仓库放 Formula： [AKAama/homebrew-lyrics-display](https://github.com/AKAama/homebrew-lyrics-display)
 
 这样用户安装时会变成：
 
