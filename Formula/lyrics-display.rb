@@ -18,6 +18,13 @@ class LyricsDisplay < Formula
     system "go", "build", *std_go_args(ldflags: ldflags), "."
   end
 
+  service do
+    run [opt_bin/"lyrics-display", "--service"]
+    keep_alive true
+    log_path var/"log/lyrics-display.log"
+    error_log_path var/"log/lyrics-display.log"
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/lyrics-display --version")
   end

@@ -10,47 +10,56 @@ import (
 	"strings"
 )
 
-func handleCLI(args []string, stdout io.Writer, store *configStore, cfg config) bool {
+type cliResult struct {
+	Handled bool
+	Service bool
+}
+
+func handleCLI(args []string, stdout io.Writer, store *configStore, cfg config) cliResult {
 	fs := flag.NewFlagSet("lyrics-display", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 
 	showVersion := fs.Bool("version", false, "print version information")
 	showHelp := fs.Bool("help", false, "show help")
+	service := fs.Bool("service", false, "run as a Homebrew background service")
 	fs.BoolVar(showHelp, "h", false, "show help")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stdout)
 		printUsage(stdout)
-		return true
+		return cliResult{Handled: true}
 	}
 
 	if *showHelp {
 		printUsage(stdout)
-		return true
+		return cliResult{Handled: true}
 	}
 
 	if *showVersion {
 		fmt.Fprintln(stdout, versionString())
-		return true
+		return cliResult{Handled: true}
 	}
 
 	if fs.NArg() == 0 {
-		return false
+		return cliResult{Service: *service}
 	}
 
 	switch fs.Arg(0) {
 	case "version":
 		fmt.Fprintln(stdout, versionString())
-		return true
+		return cliResult{Handled: true}
 	case "status":
-		return handleStatus(stdout, store, cfg)
+		handleStatus(stdout, store, cfg)
+		return cliResult{Handled: true}
 	case "config":
-		return handleConfigCommand(stdout, store, cfg, fs.Args()[1:])
+		handleConfigCommand(stdout, store, cfg, fs.Args()[1:])
+		return cliResult{Handled: true}
 	case "offset":
-		return handleOffsetCommand(stdout, store, cfg, fs.Args()[1:])
+		handleOffsetCommand(stdout, store, cfg, fs.Args()[1:])
+		return cliResult{Handled: true}
 	}
 
-	return false
+	return cliResult{Service: *service}
 }
 
 func printUsage(w io.Writer) {
@@ -60,6 +69,7 @@ Apple Music menu bar lyrics for macOS.
 
 Usage:
   lyrics-display                                        Start the menu bar app
+  lyrics-display --service                              Start as a Homebrew background service
   lyrics-display --help                                 Show this help text
   lyrics-display --version                              Print version information
   lyrics-display status                                 Show current config and runtime hints
@@ -69,6 +79,7 @@ Usage:
   lyrics-display config set emoji on|off                Enable or disable the menu bar emoji
   lyrics-display config set emoji-char "♪"             Set the emoji or prefix symbol
   lyrics-display config set offset-ms 450               Set lyric sync offset in milliseconds
+  lyrics-display config set slot-width 18               Set menu bar slot width in CJK characters (8-40)
   lyrics-display offset +100                            Delay lyric matching by 100ms
   lyrics-display offset -100                            Advance lyric matching by 100ms
   lyrics-display offset set 350                         Set lyric offset directly
@@ -92,6 +103,7 @@ func handleStatus(stdout io.Writer, store *configStore, cfg config) bool {
 	fmt.Fprintf(stdout, "config: %s\n", store.pathString())
 	fmt.Fprintf(stdout, "emoji: %t (%s)\n", cfg.ShowEmoji, cfg.Emoji)
 	fmt.Fprintf(stdout, "offset_ms: %d\n", cfg.OffsetMS)
+	fmt.Fprintf(stdout, "slot_width: %d\n", cfg.SlotWidth)
 	fmt.Fprintf(stdout, "music_running: %t\n", musicAppRunning(context.Background()))
 	fmt.Fprintln(stdout, "note: menu bar text color and font are controlled by macOS and are not configurable in this build.")
 	return true
@@ -122,7 +134,7 @@ func handleConfigCommand(stdout io.Writer, store *configStore, cfg config, args 
 		fmt.Fprintf(stdout, "initialized config at %s\n", store.pathString())
 	case "set":
 		if len(args) < 3 {
-			fmt.Fprintln(stdout, "usage: lyrics-display config set <emoji|emoji-char|offset-ms> <value>")
+			fmt.Fprintln(stdout, "usage: lyrics-display config set <emoji|emoji-char|offset-ms|slot-width> <value>")
 			return true
 		}
 		switch args[1] {
@@ -142,8 +154,15 @@ func handleConfigCommand(stdout io.Writer, store *configStore, cfg config, args 
 				return true
 			}
 			cfg.OffsetMS = value
+		case "slot-width":
+			value, err := strconv.Atoi(args[2])
+			if err != nil {
+				fmt.Fprintln(stdout, "slot-width expects an integer")
+				return true
+			}
+			cfg.SlotWidth = value
 		default:
-			fmt.Fprintln(stdout, "supported keys: emoji, emoji-char, offset-ms")
+			fmt.Fprintln(stdout, "supported keys: emoji, emoji-char, offset-ms, slot-width")
 			return true
 		}
 

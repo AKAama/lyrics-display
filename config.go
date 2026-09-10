@@ -15,6 +15,7 @@ type config struct {
 	ShowEmoji bool   `json:"show_emoji"`
 	Emoji     string `json:"emoji"`
 	OffsetMS  int    `json:"offset_ms"`
+	SlotWidth int    `json:"slot_width"`
 }
 
 func defaultConfig() config {
@@ -22,6 +23,7 @@ func defaultConfig() config {
 		ShowEmoji: true,
 		Emoji:     defaultEmoji,
 		OffsetMS:  int(defaultOffset / time.Millisecond),
+		SlotWidth: defaultSlotWidth,
 	}
 }
 
@@ -105,6 +107,15 @@ func (c *config) normalize() {
 	if c.OffsetMS > 5000 {
 		c.OffsetMS = 5000
 	}
+	if c.SlotWidth <= 0 {
+		c.SlotWidth = defaultSlotWidth
+	}
+	if c.SlotWidth < minSlotWidth {
+		c.SlotWidth = minSlotWidth
+	}
+	if c.SlotWidth > maxSlotWidth {
+		c.SlotWidth = maxSlotWidth
+	}
 }
 
 func (c config) titlePrefix() string {
@@ -116,6 +127,14 @@ func (c config) titlePrefix() string {
 
 func (c config) offsetDuration() time.Duration {
 	return time.Duration(c.OffsetMS) * time.Millisecond
+}
+
+func (c config) slotCells() int {
+	width := c.SlotWidth
+	if width <= 0 {
+		width = defaultSlotWidth
+	}
+	return normalizeSlotCells(width * 2)
 }
 
 func stripJSONComments(input []byte) ([]byte, error) {

@@ -20,6 +20,7 @@ type nowPlaying struct {
 	Artist   string
 	Album    string
 	Position time.Duration
+	Duration time.Duration
 }
 
 type lyricLine struct {
@@ -27,15 +28,32 @@ type lyricLine struct {
 	Text string
 }
 
+type lyricSourceKind string
+
+const (
+	lyricSourceNone    lyricSourceKind = ""
+	lyricSourceMusic   lyricSourceKind = "music"
+	lyricSourceApple   lyricSourceKind = "apple"
+	lyricSourceNetease lyricSourceKind = "netease"
+	lyricSourceLRCLIB  lyricSourceKind = "lrclib"
+)
+
 type lyricDocument struct {
-	Track       string
-	Artist      string
-	SourceID    int64
-	Lines       []lyricLine
-	FetchedAt   time.Time
-	DisplayName string
-	Candidates  []lyricCandidate
-	SourceIndex int
+	Track          string
+	Artist         string
+	SourceID       int64
+	Lines          []lyricLine
+	FetchedAt      time.Time
+	DisplayName    string
+	Candidates     []lyricCandidate
+	SourceIndex    int
+	SourceKind     lyricSourceKind
+	Untimed        bool
+	HadBuiltin     bool
+	BuiltinLines   []lyricLine
+	BuiltinUntimed bool
+	BuiltinKind    lyricSourceKind
+	FetchError     string
 }
 
 type lyricCandidate struct {
@@ -43,6 +61,8 @@ type lyricCandidate struct {
 	Name   string
 	Artist string
 	Score  int
+	Kind   lyricSourceKind
+	Synced string
 }
 
 type lyricCache struct {
@@ -65,6 +85,12 @@ func (c *lyricCache) put(key string, doc lyricDocument) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.items[key] = doc
+}
+
+func (c *lyricCache) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, key)
 }
 
 type neteaseClient struct {

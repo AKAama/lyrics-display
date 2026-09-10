@@ -16,10 +16,12 @@ import (
 
 type app struct {
 	client         *neteaseClient
+	lrclib         *lrclibClient
 	cache          *lyricCache
 	logger         *log.Logger
 	configStore    *configStore
 	config         config
+	serviceManaged bool
 	stateMu        sync.Mutex
 	currentTrack   nowPlaying
 	activeLyrics   lyricDocument
@@ -29,44 +31,57 @@ type app struct {
 	trackItem      *systray.MenuItem
 	sourceItem     *systray.MenuItem
 	nextSourceItem *systray.MenuItem
+	reloadItem     *systray.MenuItem
 	pathItem       *systray.MenuItem
 	lastTitle      string
 	lastTrackKey   string
+	marquee        marqueeState
 }
 
 var (
-	currentConfigStore *configStore
-	currentConfig      config
+	currentConfigStore    *configStore
+	currentConfig         config
+	currentServiceManaged bool
 )
 
-func startMenuBarApp(store *configStore, cfg config) {
+func startMenuBarApp(store *configStore, cfg config, serviceManaged bool) {
 	currentConfigStore = store
 	currentConfig = cfg
+	currentServiceManaged = serviceManaged
 	systray.Run(onReady, onExit)
 }
 
 func onReady() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
+	netease := newNetEaseClient()
 	app := &app{
-		client:      newNetEaseClient(),
-		cache:       newLyricCache(),
-		logger:      log.New(os.Stdout, "[lyrics-display] ", log.LstdFlags),
-		configStore: currentConfigStore,
-		config:      currentConfig,
-		cancel:      cancel,
+		client:         netease,
+		lrclib:         newLRCLIBClient(netease.http),
+		cache:          newLyricCache(),
+		logger:         newAppLogger(),
+		configStore:    currentConfigStore,
+		config:         currentConfig,
+		serviceManaged: currentServiceManaged,
+		cancel:         cancel,
+		marquee:        newMarqueeState(currentConfig.slotCells()),
 	}
 
 	systray.SetTooltip("Apple Music Lyrics Display")
-	systray.SetTitle(app.config.titlePrefix() + "启动中…")
+	app.setTitle("启动中…")
 
 	app.statusItem = systray.AddMenuItem("状态：启动中", "Current status")
 	app.trackItem = systray.AddMenuItem("歌曲：-", "Current track")
-	app.sourceItem = systray.AddMenuItem("歌词源：网易云音乐", "Lyric provider")
+	app.sourceItem = systray.AddMenuItem("歌词源：-", "Lyric provider")
 	app.nextSourceItem = systray.AddMenuItem("换下一个歌词源", "Switch to the next lyric candidate")
+	app.reloadItem = systray.AddMenuItem("重新获取歌词", "Reload lyrics for the current track")
 	app.pathItem = systray.AddMenuItem("打开配置文件", "Open config file in Finder")
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("退出", "Quit")
+	quitTitle := "退出"
+	if app.serviceManaged {
+		quitTitle = "停止后台服务"
+	}
+	quitItem := systray.AddMenuItem(quitTitle, "Quit")
 
 	go func() {
 		select {
@@ -85,6 +100,11 @@ func onExit() {}
 
 func (a *app) quit() {
 	a.quitOnce.Do(func() {
+		if a.serviceManaged {
+			if err := stopBrewLaunchAgent(); err != nil {
+				a.logger.Printf("stop background service: %v", err)
+			}
+		}
 		if a.cancel != nil {
 			a.cancel()
 		}
@@ -95,11 +115,15 @@ func (a *app) quit() {
 func (a *app) run(ctx context.Context) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	scroll := time.NewTicker(marqueeTickInterval)
+	defer scroll.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-scroll.C:
+			a.tickMarquee()
 		case <-ticker.C:
 			nowPlaying, err := readNowPlaying(ctx)
 			if err != nil {
@@ -147,17 +171,43 @@ func (a *app) loadLyrics(ctx context.Context, nowPlaying nowPlaying) lyricDocume
 		return cached
 	}
 
-	doc, err := a.client.fetchLyrics(ctx, nowPlaying.Track, nowPlaying.Artist)
+	if appleDoc, appleErr := fetchAppleCatalogLyrics(ctx, nowPlaying); appleErr != nil {
+		a.logger.Printf("apple catalog lyrics for %s: %v", key, appleErr)
+	} else if len(appleDoc.Lines) > 0 {
+		a.cache.put(key, appleDoc)
+		return appleDoc
+	}
+
+	builtin, err := readBuiltinLyrics(ctx)
 	if err != nil {
-		a.logger.Printf("fetch lyrics for %s: %v", key, err)
-		return lyricDocument{
-			Track:       nowPlaying.Track,
-			Artist:      nowPlaying.Artist,
-			DisplayName: fallbackLine(nowPlaying.Track, nowPlaying.Artist),
+		a.logger.Printf("read builtin lyrics for %s: %v", key, err)
+		builtin = ""
+	}
+
+	var online lyricDocument
+	var fetchErr error
+	if len(parseLRC(builtin)) == 0 {
+		online, fetchErr = fetchOnlineLyrics(ctx, a.client, a.lrclib, nowPlaying.Track, nowPlaying.Artist)
+		if fetchErr != nil {
+			a.logger.Printf("fetch lyrics for %s: %v", key, fetchErr)
 		}
 	}
 
-	a.cache.put(key, doc)
+	doc := resolveLyrics(nowPlaying.Track, nowPlaying.Artist, builtin, online, fetchErr == nil && len(online.Lines) > 0)
+	if len(online.Candidates) > 0 {
+		doc.Candidates = online.Candidates
+		if doc.SourceKind == lyricSourceNetease || doc.SourceKind == lyricSourceLRCLIB {
+			doc.SourceIndex = online.SourceIndex
+			doc.SourceID = online.SourceID
+		}
+	}
+	if fetchErr != nil && doc.SourceKind == lyricSourceNone {
+		doc.FetchError = fetchErr.Error()
+	}
+
+	if len(doc.Lines) > 0 {
+		a.cache.put(key, doc)
+	}
 	return doc
 }
 
@@ -171,12 +221,9 @@ func (a *app) renderLyric(np nowPlaying, doc lyricDocument) {
 	a.statusItem.SetTitle("状态：播放中")
 	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
 
-	if doc.SourceID > 0 {
-		a.sourceItem.SetTitle(a.sourceTitle(doc))
-	} else {
-		a.sourceItem.SetTitle("歌词源：未命中，显示歌曲信息")
-	}
+	a.sourceItem.SetTitle(a.sourceTitle(doc))
 	a.refreshSourceMenu(doc)
+	a.reloadItem.Enable()
 }
 
 func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
@@ -185,21 +232,21 @@ func (a *app) renderPaused(np nowPlaying, doc lyricDocument) {
 		line = fallbackLine(np.Track, np.Artist)
 	}
 
-	a.setTitle("暂停 | " + line)
+	a.setTitle(line)
 	a.statusItem.SetTitle("状态：暂停")
 	a.trackItem.SetTitle("歌曲：" + fallbackLine(np.Track, np.Artist))
-	if doc.SourceID > 0 {
-		a.sourceItem.SetTitle(a.sourceTitle(doc))
-	}
+	a.sourceItem.SetTitle(a.sourceTitle(doc))
 	a.refreshSourceMenu(doc)
+	a.reloadItem.Enable()
 }
 
 func (a *app) renderIdle(status string) {
 	a.setTitle(status)
 	a.statusItem.SetTitle("状态：" + status)
 	a.trackItem.SetTitle("歌曲：-")
-	a.sourceItem.SetTitle("歌词源：网易云音乐")
+	a.sourceItem.SetTitle("歌词源：-")
 	a.nextSourceItem.Disable()
+	a.reloadItem.Disable()
 }
 
 func (a *app) renderError(message string) {
@@ -208,13 +255,43 @@ func (a *app) renderError(message string) {
 }
 
 func (a *app) setTitle(line string) {
-	title := a.config.titlePrefix() + trimForMenuBar(line)
-	if title == a.lastTitle {
+	a.stateMu.Lock()
+	a.marquee.setText(line, time.Now())
+	title := a.config.titlePrefix() + a.marquee.view()
+	unchanged := title == a.lastTitle
+	if !unchanged {
+		a.lastTitle = title
+	}
+	a.stateMu.Unlock()
+	if unchanged {
 		return
 	}
-
 	systray.SetTitle(title)
-	a.lastTitle = title
+	a.lockMenuBarWidth()
+}
+
+func (a *app) tickMarquee() {
+	a.stateMu.Lock()
+	playing := a.currentTrack.State == statePlaying
+	moved := a.marquee.advance(time.Now(), playing)
+	title := a.config.titlePrefix() + a.marquee.view()
+	unchanged := !moved && title == a.lastTitle
+	if !unchanged {
+		a.lastTitle = title
+	}
+	cfg := a.config
+	a.stateMu.Unlock()
+	if unchanged {
+		return
+	}
+	systray.SetTitle(title)
+	lockStatusItemToSlot(cfg.titlePrefix(), cfg.SlotWidth)
+}
+
+func (a *app) lockMenuBarWidth() {
+	cfg := a.config
+	cfg.normalize()
+	lockStatusItemToSlot(cfg.titlePrefix(), cfg.SlotWidth)
 }
 
 func (a *app) handleMenuActions(ctx context.Context) {
@@ -224,6 +301,8 @@ func (a *app) handleMenuActions(ctx context.Context) {
 			return
 		case <-a.nextSourceItem.ClickedCh:
 			a.switchToNextSource(ctx)
+		case <-a.reloadItem.ClickedCh:
+			a.reloadLyrics(ctx)
 		case <-a.pathItem.ClickedCh:
 			if err := a.openConfigInFinder(); err != nil {
 				a.logger.Printf("open config in finder: %v", err)
@@ -260,34 +339,106 @@ func (a *app) currentNowPlaying() nowPlaying {
 }
 
 func (a *app) sourceTitle(doc lyricDocument) string {
-	total := len(doc.Candidates)
-	if total == 0 {
-		return fmt.Sprintf("歌词源：网易云 #%d", doc.SourceID)
+	switch doc.SourceKind {
+	case lyricSourceApple:
+		return "歌词源：Apple Music"
+	case lyricSourceMusic:
+		if doc.Untimed {
+			return "歌词源：Music 内置（无时间轴）"
+		}
+		return "歌词源：Music 内置"
+	case lyricSourceNetease, lyricSourceLRCLIB:
+		label := sourceKindLabel(doc.SourceKind)
+		total := len(doc.Candidates)
+		if total == 0 {
+			return fmt.Sprintf("歌词源：%s #%d", label, doc.SourceID)
+		}
+		return fmt.Sprintf("歌词源：%d/%d %s #%d", doc.SourceIndex+1, total, label, doc.SourceID)
+	default:
+		if doc.FetchError != "" {
+			return "歌词源：未命中，可重新搜索"
+		}
+		return "歌词源：未命中，显示歌曲信息"
 	}
-	return fmt.Sprintf("歌词源：%d/%d 网易云 #%d", doc.SourceIndex+1, total, doc.SourceID)
+}
+
+func sourceKindLabel(kind lyricSourceKind) string {
+	switch kind {
+	case lyricSourceLRCLIB:
+		return "LRCLIB"
+	case lyricSourceApple:
+		return "Apple Music"
+	case lyricSourceMusic:
+		return "Music 内置"
+	default:
+		return "网易云"
+	}
 }
 
 func (a *app) refreshSourceMenu(doc lyricDocument) {
-	if len(doc.Candidates) <= 1 {
+	switch {
+	case doc.SourceKind == lyricSourceNone && len(doc.Candidates) == 0:
+		a.nextSourceItem.SetTitle("重新搜索歌词")
+		a.nextSourceItem.Enable()
+	case doc.SourceKind == lyricSourceNone:
+		next := doc.Candidates[doc.SourceIndex]
+		a.nextSourceItem.SetTitle(fmt.Sprintf("使用歌词源：%s - %s", trimForMenuBar(next.Name), trimForMenuBar(next.Artist)))
+		a.nextSourceItem.Enable()
+	case doc.SourceKind == lyricSourceMusic, doc.SourceKind == lyricSourceApple:
+		a.nextSourceItem.SetTitle("改用在线歌词")
+		a.nextSourceItem.Enable()
+	case doc.HadBuiltin && (len(doc.Candidates) == 0 || doc.SourceIndex >= len(doc.Candidates)-1):
+		a.nextSourceItem.SetTitle("换下一个歌词源：Music 内置")
+		a.nextSourceItem.Enable()
+	case len(doc.Candidates) <= 1:
 		a.nextSourceItem.SetTitle("换下一个歌词源（无更多候选）")
 		a.nextSourceItem.Disable()
-		return
+	default:
+		nextIndex := (doc.SourceIndex + 1) % len(doc.Candidates)
+		next := doc.Candidates[nextIndex]
+		a.nextSourceItem.SetTitle(fmt.Sprintf("换下一个歌词源：%s - %s", trimForMenuBar(next.Name), trimForMenuBar(next.Artist)))
+		a.nextSourceItem.Enable()
 	}
-
-	nextIndex := (doc.SourceIndex + 1) % len(doc.Candidates)
-	next := doc.Candidates[nextIndex]
-	a.nextSourceItem.SetTitle(fmt.Sprintf("换下一个歌词源：%s - %s", trimForMenuBar(next.Name), trimForMenuBar(next.Artist)))
-	a.nextSourceItem.Enable()
 }
 
 func (a *app) switchToNextSource(ctx context.Context) {
 	currentTrack := a.currentNowPlaying()
 	currentLyrics := a.currentLyrics()
-	if currentTrack.Track == "" || len(currentLyrics.Candidates) <= 1 {
+	if currentTrack.Track == "" {
 		return
 	}
 
-	nextDoc, err := a.client.fetchNextLyrics(ctx, currentTrack.Track, currentTrack.Artist, currentLyrics)
+	if currentLyrics.SourceKind == lyricSourceNone && len(currentLyrics.Candidates) == 0 {
+		a.reloadLyrics(ctx)
+		return
+	}
+
+	var nextDoc lyricDocument
+	var err error
+
+	switch {
+	case currentLyrics.SourceKind == lyricSourceMusic, currentLyrics.SourceKind == lyricSourceApple:
+		nextDoc, err = fetchOnlineLyrics(ctx, a.client, a.lrclib, currentTrack.Track, currentTrack.Artist)
+		if err == nil {
+			nextDoc = preserveBuiltin(nextDoc, currentLyrics)
+		}
+	case currentLyrics.HadBuiltin && (len(currentLyrics.Candidates) == 0 || currentLyrics.SourceIndex >= len(currentLyrics.Candidates)-1):
+		nextDoc = restoreBuiltin(currentLyrics)
+	default:
+		if len(currentLyrics.Candidates) == 0 {
+			a.reloadLyrics(ctx)
+			return
+		}
+		nextIndex := (currentLyrics.SourceIndex + 1) % len(currentLyrics.Candidates)
+		if currentLyrics.SourceKind == lyricSourceNone {
+			nextIndex = currentLyrics.SourceIndex
+		}
+		nextDoc, err = fetchCandidateLyrics(ctx, a.client, a.lrclib, currentTrack.Track, currentTrack.Artist, currentLyrics, nextIndex)
+		if err == nil {
+			nextDoc = preserveBuiltin(nextDoc, currentLyrics)
+		}
+	}
+
 	if err != nil {
 		a.logger.Printf("switch source: %v", err)
 		a.statusItem.SetTitle("状态：切换歌词源失败")
@@ -298,6 +449,69 @@ func (a *app) switchToNextSource(ctx context.Context) {
 	a.storePlaybackState(currentTrack, nextDoc)
 	a.lastTitle = ""
 	a.renderLyric(currentTrack, nextDoc)
+}
+
+func (a *app) reloadLyrics(ctx context.Context) {
+	currentTrack := a.currentNowPlaying()
+	if currentTrack.Track == "" {
+		return
+	}
+	key := trackKey(currentTrack.Track, currentTrack.Artist)
+	a.cache.delete(key)
+	a.lastTrackKey = ""
+	a.statusItem.SetTitle("状态：正在重新获取歌词")
+	doc := a.loadLyrics(ctx, currentTrack)
+	a.lastTrackKey = key
+	a.storePlaybackState(currentTrack, doc)
+	a.lastTitle = ""
+	a.renderLyric(currentTrack, doc)
+}
+
+func preserveBuiltin(next, current lyricDocument) lyricDocument {
+	next.HadBuiltin = current.HadBuiltin || current.SourceKind == lyricSourceMusic || current.SourceKind == lyricSourceApple
+	if len(current.BuiltinLines) > 0 {
+		next.BuiltinLines = current.BuiltinLines
+		next.BuiltinUntimed = current.BuiltinUntimed
+		if current.BuiltinKind != "" {
+			next.BuiltinKind = current.BuiltinKind
+		} else {
+			next.BuiltinKind = current.SourceKind
+		}
+	} else if current.SourceKind == lyricSourceMusic || current.SourceKind == lyricSourceApple {
+		next.BuiltinLines = current.Lines
+		next.BuiltinUntimed = current.Untimed
+		next.HadBuiltin = true
+		next.BuiltinKind = current.SourceKind
+	}
+	if next.SourceKind == "" {
+		next.SourceKind = lyricSourceNetease
+	}
+	return next
+}
+
+func restoreBuiltin(current lyricDocument) lyricDocument {
+	lines := current.BuiltinLines
+	if len(lines) == 0 {
+		lines = current.Lines
+	}
+	kind := current.BuiltinKind
+	if kind == "" {
+		kind = lyricSourceMusic
+	}
+	return lyricDocument{
+		Track:          current.Track,
+		Artist:         current.Artist,
+		Lines:          lines,
+		FetchedAt:      time.Now(),
+		DisplayName:    fallbackLine(current.Track, current.Artist),
+		Candidates:     current.Candidates,
+		SourceKind:     kind,
+		Untimed:        current.BuiltinUntimed,
+		HadBuiltin:     true,
+		BuiltinLines:   lines,
+		BuiltinUntimed: current.BuiltinUntimed,
+		BuiltinKind:    kind,
+	}
 }
 
 func (a *app) openConfigInFinder() error {

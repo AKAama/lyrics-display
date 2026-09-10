@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.0
+
+Apple Music lyrics, native app packaging, and menu bar slot polish.
+
+### Added
+
+- Prefer Apple Music built-in lyrics when they contain a timeline, then fall back to NetEase
+- Fall back to LRCLIB when NetEase is blocked or returns no timed lyrics
+- Use unsynced Music lyrics when no timed source is available
+- Menu action to switch from built-in lyrics to online lyrics, and back
+- Menu action to reload lyrics for the current track
+- Configurable menu bar slot width via `slot_width`
+- Keep the menu bar lyric slot at a fixed pixel width while scrolling mixed Chinese/English lines, without rewriting Latin letters as fullwidth glyphs
+- Read official Apple Music timed lyrics from Music.app's local TTML cache
+- Native `.app` / DMG packaging for drag-and-drop install
+- `--service` mode so Homebrew services can be stopped from the menu bar
+
+### Fixed
+
+- Empty lyric misses are no longer cached, so a failed first fetch cannot stick forever
+- The source menu stays usable after a miss, with retry and candidate switching
+- Quitting from the menu while launched by `brew services` now unloads the LaunchAgent instead of being restarted by `keep_alive`
+
 ## v0.1.3
 
 Configuration workflow cleanup release.
