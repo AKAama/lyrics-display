@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.1
+
+Bug-fix release for AppleScript playback parsing, lyric source switching, and menu bar sizing.
+
+### Fixed
+
+- Accept AppleScript playback positions that use a comma as the decimal separator
+- Continue trying alternative lyric candidates when one online source fails
+- Add detailed logs for lyric source switching and reload failures
+- Keep the configured `slot_width` consistent between marquee rendering and the menu bar item width
+
 ## v0.2.0
 
 Apple Music lyrics, native app packaging, and menu bar slot polish.

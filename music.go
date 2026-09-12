@@ -68,14 +68,14 @@ end tell
 		return nowPlaying{}, fmt.Errorf("unexpected player payload: %q", string(out))
 	}
 
-	seconds, err := strconv.ParseFloat(strings.TrimSpace(parts[4]), 64)
+	seconds, err := parseAppleScriptNumber(parts[4])
 	if err != nil {
 		return nowPlaying{}, fmt.Errorf("parse player position: %w", err)
 	}
 
 	var duration time.Duration
 	if len(parts) >= 6 {
-		if total, durErr := strconv.ParseFloat(strings.TrimSpace(parts[5]), 64); durErr == nil {
+		if total, durErr := parseAppleScriptNumber(parts[5]); durErr == nil {
 			duration = time.Duration(total * float64(time.Second))
 		}
 	}
@@ -88,6 +88,14 @@ end tell
 		Position: time.Duration(seconds * float64(time.Second)),
 		Duration: duration,
 	}, nil
+}
+
+func parseAppleScriptNumber(value string) (float64, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, ",") && !strings.Contains(value, ".") {
+		value = strings.ReplaceAll(value, ",", ".")
+	}
+	return strconv.ParseFloat(value, 64)
 }
 
 func musicAppRunning(ctx context.Context) bool {

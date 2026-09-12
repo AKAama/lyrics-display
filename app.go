@@ -285,13 +285,13 @@ func (a *app) tickMarquee() {
 		return
 	}
 	systray.SetTitle(title)
-	lockStatusItemToSlot(cfg.titlePrefix(), cfg.SlotWidth)
+	lockStatusItemToSlot(cfg.titlePrefix(), cfg.slotCells())
 }
 
 func (a *app) lockMenuBarWidth() {
 	cfg := a.config
 	cfg.normalize()
-	lockStatusItemToSlot(cfg.titlePrefix(), cfg.SlotWidth)
+	lockStatusItemToSlot(cfg.titlePrefix(), cfg.slotCells())
 }
 
 func (a *app) handleMenuActions(ctx context.Context) {
@@ -404,43 +404,63 @@ func (a *app) refreshSourceMenu(doc lyricDocument) {
 func (a *app) switchToNextSource(ctx context.Context) {
 	currentTrack := a.currentNowPlaying()
 	currentLyrics := a.currentLyrics()
+	a.logger.Printf("switch source requested: track=%q artist=%q current=%s", currentTrack.Track, currentTrack.Artist, lyricDocumentSummary(currentLyrics))
 	if currentTrack.Track == "" {
+		a.logger.Printf("switch source ignored: no current track")
 		return
 	}
 
 	if currentLyrics.SourceKind == lyricSourceNone && len(currentLyrics.Candidates) == 0 {
+		a.logger.Printf("switch source: no current lyrics or candidates, reloading track=%q", trackKey(currentTrack.Track, currentTrack.Artist))
 		a.reloadLyrics(ctx)
 		return
 	}
 
 	var nextDoc lyricDocument
 	var err error
+	branch := ""
 
 	switch {
 	case currentLyrics.SourceKind == lyricSourceMusic, currentLyrics.SourceKind == lyricSourceApple:
+		branch = "builtin-to-online"
+		a.logger.Printf("switch source branch=%s: searching online lyrics", branch)
 		nextDoc, err = fetchOnlineLyrics(ctx, a.client, a.lrclib, currentTrack.Track, currentTrack.Artist)
 		if err == nil {
 			nextDoc = preserveBuiltin(nextDoc, currentLyrics)
 		}
 	case currentLyrics.HadBuiltin && (len(currentLyrics.Candidates) == 0 || currentLyrics.SourceIndex >= len(currentLyrics.Candidates)-1):
+		branch = "online-to-builtin"
+		a.logger.Printf("switch source branch=%s: restoring builtin source", branch)
 		nextDoc = restoreBuiltin(currentLyrics)
 	default:
 		if len(currentLyrics.Candidates) == 0 {
+			a.logger.Printf("switch source: online source has no candidates, reloading track=%q", trackKey(currentTrack.Track, currentTrack.Artist))
 			a.reloadLyrics(ctx)
 			return
 		}
+		branch = "online-candidate"
 		nextIndex := (currentLyrics.SourceIndex + 1) % len(currentLyrics.Candidates)
 		if currentLyrics.SourceKind == lyricSourceNone {
 			nextIndex = currentLyrics.SourceIndex
 		}
-		nextDoc, err = fetchCandidateLyrics(ctx, a.client, a.lrclib, currentTrack.Track, currentTrack.Artist, currentLyrics, nextIndex)
-		if err == nil {
-			nextDoc = preserveBuiltin(nextDoc, currentLyrics)
+		for attempt := 0; attempt < len(currentLyrics.Candidates); attempt++ {
+			candidateIndex := (nextIndex + attempt) % len(currentLyrics.Candidates)
+			if currentLyrics.SourceKind != lyricSourceNone && candidateIndex == currentLyrics.SourceIndex {
+				continue
+			}
+			candidate := currentLyrics.Candidates[candidateIndex]
+			a.logger.Printf("switch source branch=%s: candidate=%d/%d kind=%s id=%d name=%q artist=%q", branch, candidateIndex+1, len(currentLyrics.Candidates), candidate.Kind, candidate.ID, candidate.Name, candidate.Artist)
+			nextDoc, err = fetchCandidateLyrics(ctx, a.client, a.lrclib, currentTrack.Track, currentTrack.Artist, currentLyrics, candidateIndex)
+			if err == nil {
+				nextDoc = preserveBuiltin(nextDoc, currentLyrics)
+				break
+			}
+			a.logger.Printf("switch source candidate failed: candidate=%d/%d id=%d error=%v", candidateIndex+1, len(currentLyrics.Candidates), candidate.ID, err)
 		}
 	}
 
 	if err != nil {
-		a.logger.Printf("switch source: %v", err)
+		a.logger.Printf("switch source failed: branch=%s track=%q error=%v", branch, trackKey(currentTrack.Track, currentTrack.Artist), err)
 		a.statusItem.SetTitle("状态：切换歌词源失败")
 		return
 	}
@@ -449,14 +469,25 @@ func (a *app) switchToNextSource(ctx context.Context) {
 	a.storePlaybackState(currentTrack, nextDoc)
 	a.lastTitle = ""
 	a.renderLyric(currentTrack, nextDoc)
+	a.logger.Printf("switch source succeeded: branch=%s from=%s to=%s", branch, lyricDocumentSummary(currentLyrics), lyricDocumentSummary(nextDoc))
+}
+
+func lyricDocumentSummary(doc lyricDocument) string {
+	source := string(doc.SourceKind)
+	if source == "" {
+		source = "none"
+	}
+	return fmt.Sprintf("source=%s index=%d candidates=%d builtin=%t lines=%d", source, doc.SourceIndex, len(doc.Candidates), doc.HadBuiltin, len(doc.Lines))
 }
 
 func (a *app) reloadLyrics(ctx context.Context) {
 	currentTrack := a.currentNowPlaying()
 	if currentTrack.Track == "" {
+		a.logger.Printf("reload lyrics ignored: no current track")
 		return
 	}
 	key := trackKey(currentTrack.Track, currentTrack.Artist)
+	a.logger.Printf("reload lyrics requested: track=%q artist=%q", currentTrack.Track, currentTrack.Artist)
 	a.cache.delete(key)
 	a.lastTrackKey = ""
 	a.statusItem.SetTitle("状态：正在重新获取歌词")
@@ -465,6 +496,7 @@ func (a *app) reloadLyrics(ctx context.Context) {
 	a.storePlaybackState(currentTrack, doc)
 	a.lastTitle = ""
 	a.renderLyric(currentTrack, doc)
+	a.logger.Printf("reload lyrics completed: track=%q result=%s", key, lyricDocumentSummary(doc))
 }
 
 func preserveBuiltin(next, current lyricDocument) lyricDocument {
